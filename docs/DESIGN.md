@@ -19,8 +19,8 @@ non-Nix code; strict TDD (see below).
 | `tests` | Every suite as nix-unit `{ expr, expected }` cases (`tests/default.nix`). Run one with `nix-unit --flake .#tests.unit.normalize`. |
 | `checks.<system>` | One named check per suite (`tests/checks.nix`). |
 | `apps.<system>.render` | `nix run .#render -- <flake-ref-to-an-evaluation>` prints its `config.build.yaml`. |
-| `devShells.<system>.default` | `nix-unit`, `yq-go`, `nixfmt-rfc-style`, `jq`. |
-| `formatter.<system>` | `nixfmt-rfc-style`. |
+| `devShells.<system>.default` | `nix-unit`, `yq-go`, `nixfmt`, `jq`. |
+| `formatter.<system>` | `nixfmt`. |
 
 ## Dependency policy
 
@@ -117,8 +117,19 @@ Takes a list of resource schema records, returns a module declaring
 `options.resources = mkOption { type = submodule { options.<group|core>.<version>.<Kind> = mkOption { type = attrsOf (submodule ...); default = { }; }; }; }`.
 Each instance type is the kind's normalized schema with `apiVersion`, `kind`,
 and `metadata.name` removed (and `metadata.namespace` too for cluster-scoped
-kinds) — `render` injects those. `resourceModule.instanceType resource` is
-exposed for testing.
+kinds) — `render` injects those — and from the matching `required` lists.
+Where an object accepts unknown fields (a bare `type: object` CRD `metadata`,
+`x-kubernetes-preserve-unknown-fields`, no properties), removal alone would
+let users set them, so there each is declared as an optional empty `enum`,
+which rejects any value. Every kind gets a `metadata` property, freeform if its
+schema doesn't declare one. The kind's `description` goes on the `<Kind>`
+option. `resourceModule.instanceType resource` is exposed for testing.
+
+Laziness is shallow: building the module reads every kind's top-level schema
+(the module system inspects each kind option's type), while nested schemas and
+`definitions` stay unforced — the real spec plus one declared ConfigMap
+evaluates in about 1.5 s. Declaring the same kind from two modules fails with
+the module system's "already declared" error.
 
 ### `lib/kubernetes.nix` → `kubernetes.loadKubernetes { openapi, discovery ? null }`
 

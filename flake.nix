@@ -82,13 +82,13 @@
             packages = [
               pkgs.nix-unit
               pkgs.yq-go
-              pkgs.nixfmt-rfc-style
+              pkgs.nixfmt
               pkgs.jq
             ];
           };
         }
       );
 
-      formatter = forAllSystems (system: (pkgsFor system).nixfmt-rfc-style);
+      formatter = forAllSystems (system: (pkgsFor system).nixfmt);
     };
 }
