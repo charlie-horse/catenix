@@ -69,7 +69,7 @@ nix run github:charlie-horse/catenix#render -- ./app.nix | kubectl apply -f -
 | Output | Contents |
 | --- | --- |
 | `lib` | Every `lib/*.nix` unit, keyed by file name (`lib/default.nix`). System-agnostic: units that build derivations take `pkgs` as an argument. |
-| `nixosModules.default` | `modules/resources.nix` + `modules/build.nix` + core Kubernetes types from the pinned `kubernetes-src`. Callers run their own `lib.evalModules` and must provide `pkgs` as a module argument (`specialArgs` or `_module.args.pkgs`); see [Usage](#usage). |
+| `nixosModules.default` | `modules/resources.nix` + `modules/build.nix` + core Kubernetes types from the pinned `kubernetes-src`, for the group/versions a default cluster serves (`apis = "default"`; `mkKubernetesModule` below shows how to add more). Callers run their own `lib.evalModules` and must provide `pkgs` as a module argument (`specialArgs` or `_module.args.pkgs`); see [Usage](#usage). |
 | `tests.systems.<system>` | The sandbox-safe suites as nix-unit `{ expr, expected }` cases, set by nix-unit's flake-parts module from `perSystem.nix-unit.tests` (`tests/flake-module.nix`). Run one with `nix-unit --flake .#tests.systems.x86_64-linux.unit.normalize`. |
 | `legacyPackages.<system>.evalTimeTests` | The suites that build derivations during evaluation (`unit.yaml2json`, `unit.toYaml`, `unit.importCrdModule`, `integration.*`, `e2e.*`). Run one with `nix-unit --flake .#legacyPackages.x86_64-linux.evalTimeTests.e2e.realSpec`. |
 | `checks.<system>` | `nix-unit` (every sandbox-safe suite, from nix-unit's module) plus one named check per eval-time suite (`unit-yaml2json`, …, `e2e-real-crd`). |
@@ -213,12 +213,30 @@ Laziness is shallow: building the module reads every kind's top-level schema
 evaluates in about 1.5 s. Declaring the same kind from two modules fails with
 the module system's "already declared" error.
 
-### `lib/kubernetes.nix` → `kubernetes.loadKubernetes { openapi, discovery ? null }`
+### `lib/kubernetes.nix` → `kubernetes.loadKubernetes { openapi, discovery ? null, apis ? "default" }`
 
 `openapi`: list of parsed OpenAPI v3 documents; `discovery`: parsed
 `aggregated_v2.json` or `null`. Returns resource schema records for every
 schema with `x-kubernetes-group-version-kind`, skipping `*List` kinds and
-kinds whose scope can't be determined. Scope comes from discovery for named
+kinds whose scope can't be determined, and kinds whose group/version `apis`
+leaves out:
+
+- `"default"` — only GA versions (`v<N>`: `v1`, `v2`), the ones a default
+  kube-apiserver serves. Alpha and beta versions (`v1beta1`, `v1alpha3`) are
+  left out.
+- `"all"` — every version in the spec.
+- a non-empty list of `"<group>/<version>"` strings (`"v1"` for core) — exactly
+  those; one without any kind in the spec throws, catching typos.
+
+Any other value throws. Nothing in the spec or discovery files marks what is
+served by default (the checked-in discovery lists every version as
+`freshness: Current`, and the spec has a document per version), so
+`"default"` goes by version name: new beta APIs have been disabled by default
+since Kubernetes 1.24, and the pinned v1.37's
+`pkg/controlplane/instance.go` lists every alpha and beta group/version in the
+spec as disabled by default. That list is Go code, so it's used to check the
+rule, not read. A smoke test's default k3s v1.37 server served exactly the 23
+built-in group/versions the rule keeps (`tests/unit/mkKubernetesModule.nix`). Scope comes from discovery for named
 groups when available, otherwise from `paths` (`/api/<v>/<plural>` or
 `/apis/<g>/<v>/<plural>` → cluster, `.../namespaces/{namespace}/<plural>` →
 namespaced, matched on the operation's `x-kubernetes-group-version-kind`; a
@@ -226,7 +244,7 @@ namespaced path wins, since namespaced kinds are also listed at their
 all-namespaces path). Discovery is consulted per kind: a named-group kind
 missing from it falls back to `paths`, and core-group entries are ignored.
 `definitions` is the document's `components.schemas`. Duplicate
-group/version/kind throws; no resources throws.
+group/version/kind throws; no resources (after `apis`) throws.
 
 ### `lib/crd.nix` → `crd.loadCrds documents`
 
@@ -278,12 +296,26 @@ import-from-derivation build can't be caught by `builtins.tryEval`.
   `sigs.k8s.io/yaml` on an adversarial corpus; `tests/unit/toYaml.nix` keeps
   the cases.
 
-### `lib/mkKubernetesModule.nix` → `mkKubernetesModule { kubernetesSrc }`
+### `lib/mkKubernetesModule.nix` → `mkKubernetesModule { kubernetesSrc, apis ? "default" }`
 
 Reads `api/openapi-spec/v3/*.json` (documents with `components`) and
 `api/discovery/aggregated_v2.json` from `kubernetesSrc` and returns
-`resourceModule.mkResourceModule (kubernetes.loadKubernetes { ... })`. No
-derivations — the source is already in the store.
+`resourceModule.mkResourceModule (kubernetes.loadKubernetes { ..., apis })`.
+No derivations — the source is already in the store.
+
+To type group/versions a cluster enables beyond the defaults (e.g. with
+`--runtime-config`), add a second module listing just those next to
+`nixosModules.default`; the kinds differ by version, so the declarations
+merge:
+
+```nix
+imports = [
+  (catenix.lib.mkKubernetesModule {
+    kubernetesSrc = catenix.inputs.kubernetes-src;
+    apis = [ "coordination.k8s.io/v1beta1" ];
+  })
+];
+```
 
 ### `lib/importCrdModule.nix` → `importCrdModule { pkgs, crdFile }`
 
@@ -346,9 +378,26 @@ gaps below — catenix checks types, not every rule the API server enforces:
   ranges, duplicate list-map keys, named-port rules) is the server's job.
 - **CRD `metadata` is untyped** when the CRD declares none (the usual case):
   `metadata.labels.tier = 5` type-checks but doesn't decode on the server.
-- **All versions in the spec are typed**, including alpha/beta group-versions
-  the server doesn't serve by default, and fields behind disabled feature gates
-  (silently dropped by the server).
+- **Default-served versions are recognized by name** (`apis = "default"`
+  keeps GA `v<N>` versions). That matches the pinned v1.37, where every
+  alpha/beta group/version is off by default, but not older Kubernetes, where
+  some betas were on (e.g. `batch/v1beta1` `CronJob` and `policy/v1beta1`
+  before 1.25): pinned to such a release, "default" would leave them out.
+  Per-resource enablement inside a GA group/version isn't modelled either. A kind in a left-out version is still accepted, untyped, by
+  the freeform `resources` unless `validation.strict = true`.
+- **Fields behind disabled feature gates are typed** (e.g. `emptyDir.mode`,
+  `volumeMounts[].bindMountOptions`, `configMap.defaultUser`) and silently
+  dropped by the server; so are enum values behind gates (toleration
+  `operator: Gt`), which the spec has no enums for anyway. There's no reliable
+  marker: descriptions say "(Alpha)", "This is an alpha field", "This field is
+  alpha", "alpha-level" or "Alpha, gated by", but in v1.37 about one in six
+  such fields is stale or misleading — `PodSpec.resources`,
+  `PodSecurityContext.supplementalGroupsPolicy` and
+  `VolumeProjection.clusterTrustBundle` say alpha while their gates are on by
+  default, and `PersistentVolumeClaimSpec.dataSourceRef` (GA) is marked for its
+  alpha `namespace` subfield. Dropping them would reject valid manifests, so
+  catenix types every field. Feature-gate defaults live only in Go source
+  (`pkg/features/kube_features.go`).
 - **Unknown kinds type-check unless `validation.strict = true`**, so a kind
   typo (`Deploymnet`) only fails at apply time in the default mode.
 - **Custom resources and their CRD in one `kubectl apply`** need two passes:
