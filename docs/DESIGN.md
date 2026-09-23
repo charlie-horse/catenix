@@ -285,3 +285,28 @@ it on `examples/`.
 2. Repeat until every check is green, then write `examples/` (illustrative only).
 
 Fast loop: `nix develop -c nix-unit --flake .#tests.unit.<unit>`.
+
+## Known limitations
+
+A manual smoke test applied rendered output to a real k3s v1.37 cluster (not
+part of the repo). Everything that type-checked was accepted, apart from the
+gaps below — catenix checks types, not every rule the API server enforces:
+
+- **No enums for built-in kinds.** The checked-in OpenAPI v3 spec carries no
+  `enum` constraints (the live server publishes them), so fields like
+  `imagePullPolicy`, `Service.type`, `restartPolicy` or `pathType` accept any
+  string. CRD enums are enforced.
+- **String formats and patterns aren't checked**: base64 (`Secret.data`),
+  quantities (`cpu = "lots"`), names, label syntax, `pattern`, `maxLength`.
+- **Validation outside the schema** (selector/template label agreement, port
+  ranges, duplicate list-map keys, named-port rules) is the server's job.
+- **CRD `metadata` is untyped** when the CRD declares none (the usual case):
+  `metadata.labels.tier = 5` type-checks but doesn't decode on the server.
+- **All versions in the spec are typed**, including alpha/beta group-versions
+  the server doesn't serve by default, and fields behind disabled feature gates
+  (silently dropped by the server).
+- **Server-set fields aren't blocked**: `status`, `metadata.uid`,
+  `resourceVersion`, `managedFields`, `creationTimestamp` are accepted and then
+  ignored or rejected by the server.
+- **Unknown kinds type-check unless `validation.strict = true`**, so a kind
+  typo (`Deploymnet`) only fails at apply time in the default mode.
