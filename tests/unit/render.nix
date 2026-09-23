@@ -26,8 +26,9 @@ let
     default = { };
   };
 
-  # A miniature of what `resourceModule` declares: submodule configs carry
-  # `_module`, and unset optional fields are `null`.
+  # A miniature of what `resourceModule` declares: unset optional fields are
+  # `null`. Submodule configs don't carry `_module` (`evalModules` removes it
+  # from `config`), so a `_module` key in one is user data.
   configMap = types.submodule {
     options = {
       inherit metadata;
@@ -61,7 +62,9 @@ let
     };
   };
 
-  inherit
+  # `config.resources` of these definitions, with the kinds above declared.
+  resourcesOf =
+    definitions:
     (lib.evalModules {
       modules = [
         {
@@ -83,17 +86,24 @@ let
             default = { };
           };
         }
-        {
-          resources.core.v1.ConfigMap.settings = {
-            metadata.namespace = "default";
-            data.key = "value";
-          };
-          resources.apps.v1.Deployment.web.spec.containers = [ { name = "web"; } ];
-        }
+        definitions
       ];
-    })
-    config
-    ;
+    }).config.resources;
+
+  config.resources = resourcesOf {
+    resources.core.v1.ConfigMap.settings = {
+      metadata.namespace = "default";
+      data.key = "value";
+    };
+    resources.apps.v1.Deployment.web.spec.containers = [ { name = "web"; } ];
+  };
+
+  # `_module` as a key of user data (a valid ConfigMap key), in a submodule
+  # config.
+  moduleKeyResources = resourcesOf {
+    resources.core.v1.ConfigMap.reserved.data._module = "kept";
+    resources.apps.v1.Deployment.web.spec.containers = [ { name = "web"; } ];
+  };
 in
 {
   # stripNulls
@@ -321,28 +331,21 @@ in
     };
   };
 
-  testToManifestStripsNullsAndModuleAttrsDeep = {
+  testToManifestStripsNullsDeep = {
     expr = toManifest {
       apiVersion = "v1";
       kind = "Pod";
       name = "p";
       body = {
-        _module.args = { };
-        metadata = {
-          _module.check = true;
-          namespace = null;
-        };
+        metadata.namespace = null;
         spec = {
-          _module.freeformType = null;
           hostname = null;
           containers = [
             {
-              _module.args = { };
               name = "c";
               image = null;
               env = [
                 {
-                  _module = { };
                   name = "A";
                   value = null;
                 }
@@ -365,6 +368,48 @@ in
     };
   };
 
+  # `_module` is only special in module definitions; in a manifest it's data.
+  testToManifestKeepsModuleKeys = {
+    expr = toManifest {
+      apiVersion = "example.io/v1";
+      kind = "Gizmo";
+      name = "g";
+      body = {
+        _module = "top";
+        metadata.annotations._module = "annotation";
+        data._module = "value";
+        spec = {
+          _module.check = true;
+          items = [
+            {
+              _module = { };
+              name = "a";
+            }
+          ];
+        };
+      };
+    };
+    expected = {
+      apiVersion = "example.io/v1";
+      kind = "Gizmo";
+      metadata = {
+        name = "g";
+        annotations._module = "annotation";
+      };
+      _module = "top";
+      data._module = "value";
+      spec = {
+        _module.check = true;
+        items = [
+          {
+            _module = { };
+            name = "a";
+          }
+        ];
+      };
+    };
+  };
+
   testToManifestFromSubmoduleConfig = {
     expr = toManifest {
       apiVersion = "v1";
@@ -380,6 +425,21 @@ in
         namespace = "default";
       };
       data.key = "value";
+    };
+  };
+
+  testToManifestKeepsModuleKeysOfSubmoduleConfig = {
+    expr = toManifest {
+      apiVersion = "v1";
+      kind = "ConfigMap";
+      name = "reserved";
+      body = moduleKeyResources.core.v1.ConfigMap.reserved;
+    };
+    expected = {
+      apiVersion = "v1";
+      kind = "ConfigMap";
+      metadata.name = "reserved";
+      data._module = "kept";
     };
   };
 
@@ -472,6 +532,27 @@ in
           namespace = "default";
         };
         data.key = "value";
+      }
+    ];
+  };
+
+  # Submodule configs (the ConfigMap, the Deployment and its containers) add
+  # no `_module` of their own, and the user's `_module` key survives; plain
+  # enough for `toJSON`, which would choke on `_module.args`' functions.
+  testManifestsFromResourcesKeepsModuleKeysOfModuleConfig = {
+    expr = builtins.toJSON (manifestsFromResources moduleKeyResources);
+    expected = builtins.toJSON [
+      {
+        apiVersion = "apps/v1";
+        kind = "Deployment";
+        metadata.name = "web";
+        spec.containers = [ { name = "web"; } ];
+      }
+      {
+        apiVersion = "v1";
+        kind = "ConfigMap";
+        metadata.name = "reserved";
+        data._module = "kept";
       }
     ];
   };

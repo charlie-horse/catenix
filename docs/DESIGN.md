@@ -223,7 +223,9 @@ import-from-derivation build can't be caught by `builtins.tryEval`.
 - `stripNulls value` — recursively drops `null` attribute values (inside lists too).
 - `apiVersion { group, version }` — `version` for `""`/`core`, else `group/version`.
 - `toManifest { apiVersion, kind, name, body }` — `body` with `apiVersion`,
-  `kind`, `metadata.name` injected, nulls and `_module` attrs stripped.
+  `kind`, `metadata.name` injected and nulls stripped. Everything else is
+  kept, `_module` keys included: `evalModules` already leaves `_module` out of
+  submodule configs, so one in `body` is user data (e.g. a ConfigMap key).
 - `manifestsFromResources resources` — flattens
   `resources.<group>.<version>.<Kind>.<name>` into a list of manifests (sorted
   by group, version, kind, name).

@@ -2,22 +2,17 @@
 # Everything is pure Nix except `toYaml`, which builds the file.
 { lib }:
 let
-  # Recursively keeps the attributes for which `pred name value` holds,
-  # descending into attrsets and lists.
-  filterAttrsDeep =
-    pred: value:
+  # Recursively drops `null` attribute values, descending into attrsets and
+  # lists. Submodule configs carry no `_module` (`evalModules` removes it), so
+  # every other attribute, `_module` included, is the user's data.
+  stripNulls =
+    value:
     if lib.isAttrs value then
-      lib.mapAttrs (_: filterAttrsDeep pred) (lib.filterAttrs pred value)
+      lib.mapAttrs (_: stripNulls) (lib.filterAttrs (_: v: v != null) value)
     else if lib.isList value then
-      map (filterAttrsDeep pred) value
+      map stripNulls value
     else
       value;
-
-  stripNulls = filterAttrsDeep (_: value: value != null);
-
-  # Also drops the `_module` attrs of submodule configs; the name is checked
-  # first so `_module` itself is never forced.
-  toPlain = filterAttrsDeep (name: value: name != "_module" && value != null);
 
   apiVersion =
     { group, version, ... }: if group == "" || group == "core" then version else "${group}/${version}";
@@ -29,7 +24,7 @@ let
       name,
       body,
     }:
-    toPlain (
+    stripNulls (
       body
       // {
         inherit apiVersion kind;
@@ -45,7 +40,7 @@ let
       # `f name value` for every attribute, concatenated in attribute order.
       forEach = attrs: f: lib.concatLists (lib.mapAttrsToList f attrs);
     in
-    forEach (toPlain resources) (
+    forEach (stripNulls resources) (
       group: versions:
       forEach versions (
         version: kinds:
