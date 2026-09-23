@@ -108,4 +108,43 @@ in
         ]).config.build.manifests;
     expected = false;
   };
+
+  # `DeploymentSpec.replicas` is `format: int32`: the API server would store
+  # 4294967298 as 2.
+  testInt32OverflowFails = {
+    expr =
+      let
+        deploymentWithReplicas =
+          replicas:
+          helpers.fails
+            (eval [
+              {
+                resources.apps.v1.Deployment.web = {
+                  metadata.namespace = "default";
+                  spec = {
+                    inherit replicas;
+                    selector.matchLabels.app = "web";
+                    template = {
+                      metadata.labels.app = "web";
+                      spec.containers = [
+                        {
+                          name = "web";
+                          image = "nginx:1.27";
+                        }
+                      ];
+                    };
+                  };
+                };
+              }
+            ]).config.build.manifests;
+      in
+      {
+        int32Max = deploymentWithReplicas 2147483647;
+        overflow = deploymentWithReplicas 4294967298;
+      };
+    expected = {
+      int32Max = false;
+      overflow = true;
+    };
+  };
 }

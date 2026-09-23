@@ -66,4 +66,33 @@ in
         ]).config.build.manifests;
     expected = true;
   };
+
+  # The CRD declares `replicas` with `minimum: 1` and `maximum: 10`.
+  testReplicasAboveMaximumFails = {
+    expr =
+      let
+        fooWithReplicas =
+          replicas:
+          helpers.fails
+            (eval [
+              {
+                resources."samplecontroller.k8s.io".v1alpha1.Foo.example = {
+                  metadata.namespace = "default";
+                  spec = {
+                    deploymentName = "example-foo";
+                    inherit replicas;
+                  };
+                };
+              }
+            ]).config.build.manifests;
+      in
+      {
+        maximum = fooWithReplicas 10;
+        aboveMaximum = fooWithReplicas 11;
+      };
+    expected = {
+      maximum = false;
+      aboveMaximum = true;
+    };
+  };
 }

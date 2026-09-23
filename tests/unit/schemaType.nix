@@ -103,6 +103,20 @@ let
       child = tree;
     };
   };
+
+  int32 = {
+    type = "integer";
+    format = "int32";
+  };
+
+  # The sample-controller Foo CRD's `spec.replicas`.
+  oneToTen = {
+    type = "integer";
+    minimum = 1;
+    maximum = 10;
+  };
+
+  description = schema: (schemaType schema).description;
 in
 {
   # x-kubernetes-int-or-string
@@ -350,6 +364,615 @@ in
   testBooleanRejectsString = {
     expr = rejects { type = "boolean"; } "true";
     expected = true;
+  };
+
+  # integer formats: Kubernetes decodes `format: int32` fields into Go int32s,
+  # so larger values are rejected or silently wrapped (4294967298 -> 2).
+
+  testInt32AcceptsLimits = {
+    expr = map (check int32) [
+      (-2147483648)
+      2147483647
+    ];
+    expected = [
+      (-2147483648)
+      2147483647
+    ];
+  };
+
+  testInt32RejectsAboveLimit = {
+    expr = rejects int32 2147483648;
+    expected = true;
+  };
+
+  testInt32RejectsBelowLimit = {
+    expr = rejects int32 (-2147483649);
+    expected = true;
+  };
+
+  testInt32RejectsValuesThatWrap = {
+    expr = map (rejects int32) [
+      3000000000
+      4294967298
+    ];
+    expected = [
+      true
+      true
+    ];
+  };
+
+  testInt32IsS32 = {
+    expr = description int32;
+    expected = lib.types.ints.s32.description;
+  };
+
+  testInt32DescriptionMentionsLimits = {
+    expr = description int32;
+    expected = "32 bit signed integer; between -2147483648 and 2147483647 (both inclusive)";
+  };
+
+  testInt32StillRejectsFloat = {
+    expr = rejects int32 1.5;
+    expected = true;
+  };
+
+  testInt64AcceptsBeyondInt32 = {
+    expr =
+      map
+        (check {
+          type = "integer";
+          format = "int64";
+        })
+        [
+          4294967298
+          9223372036854775807
+        ];
+    expected = [
+      4294967298
+      9223372036854775807
+    ];
+  };
+
+  testIntegerWithoutFormatAcceptsBeyondInt32 = {
+    expr = check { type = "integer"; } 4294967298;
+    expected = 4294967298;
+  };
+
+  testInt32OptionalPropertyIsNullOr = {
+    expr =
+      let
+        schema = {
+          type = "object";
+          properties.replicas = int32;
+        };
+      in
+      {
+        absent = check schema { };
+        rejected = rejects schema { replicas = 4294967298; };
+        description = (subOptions schema).replicas.type.description;
+      };
+    expected = {
+      absent.replicas = null;
+      rejected = true;
+      description = "null or 32 bit signed integer; between -2147483648 and 2147483647 (both inclusive)";
+    };
+  };
+
+  # `enum` lists the allowed values itself; format and bounds don't widen it.
+  testInt32EnumStillEnum = {
+    expr =
+      let
+        schema = int32 // {
+          enum = [
+            1
+            2
+          ];
+        };
+      in
+      {
+        accepted = check schema 2;
+        rejected = rejects schema 3;
+      };
+    expected = {
+      accepted = 2;
+      rejected = true;
+    };
+  };
+
+  # A typeless oneOf maps each branch, so a branch's format applies to it.
+  testInt32InsideOneOfBranch = {
+    expr =
+      let
+        schema.oneOf = [
+          int32
+          { type = "string"; }
+        ];
+      in
+      {
+        accepted = map (check schema) [
+          2147483647
+          "x"
+        ];
+        rejected = rejects schema 2147483648;
+      };
+    expected = {
+      accepted = [
+        2147483647
+        "x"
+      ];
+      rejected = true;
+    };
+  };
+
+  # numeric bounds: minimum / maximum / exclusiveMinimum / exclusiveMaximum
+
+  testBoundsAcceptInclusiveLimits = {
+    expr = map (check oneToTen) [
+      1
+      5
+      10
+    ];
+    expected = [
+      1
+      5
+      10
+    ];
+  };
+
+  testBoundsRejectBelowMinimum = {
+    expr = rejects oneToTen 0;
+    expected = true;
+  };
+
+  testBoundsRejectAboveMaximum = {
+    expr = rejects oneToTen 11;
+    expected = true;
+  };
+
+  testBoundsStillRejectWrongType = {
+    expr = map (rejects oneToTen) [
+      1.5
+      "5"
+    ];
+    expected = [
+      true
+      true
+    ];
+  };
+
+  testBoundsDescription = {
+    expr = description oneToTen;
+    expected = "integer between 1 and 10 (both inclusive)";
+  };
+
+  testBoundsOptionalPropertyIsNullOr = {
+    expr =
+      let
+        schema = {
+          type = "object";
+          properties.replicas = oneToTen;
+        };
+      in
+      {
+        absent = check schema { };
+        explicitNull = check schema { replicas = null; };
+        accepted = check schema { replicas = 10; };
+        rejected = rejects schema { replicas = 11; };
+        description = (subOptions schema).replicas.type.description;
+      };
+    expected = {
+      absent.replicas = null;
+      explicitNull.replicas = null;
+      accepted.replicas = 10;
+      rejected = true;
+      description = "null or integer between 1 and 10 (both inclusive)";
+    };
+  };
+
+  testBoundsRequiredPropertyDescription = {
+    expr =
+      (subOptions {
+        type = "object";
+        required = [ "replicas" ];
+        properties.replicas = oneToTen;
+      }).replicas.type.description;
+    expected = "integer between 1 and 10 (both inclusive)";
+  };
+
+  testMinimumOnly = {
+    expr =
+      let
+        schema = {
+          type = "integer";
+          minimum = 0;
+        };
+      in
+      {
+        accepted = map (check schema) [
+          0
+          9223372036854775807
+        ];
+        rejected = rejects schema (-1);
+        description = description schema;
+      };
+    expected = {
+      accepted = [
+        0
+        9223372036854775807
+      ];
+      rejected = true;
+      description = "integer at least 0";
+    };
+  };
+
+  testMaximumOnly = {
+    expr =
+      let
+        schema = {
+          type = "integer";
+          maximum = 10;
+        };
+      in
+      {
+        accepted = map (check schema) [
+          (-9223372036854775807)
+          10
+        ];
+        rejected = rejects schema 11;
+        description = description schema;
+      };
+    expected = {
+      accepted = [
+        (-9223372036854775807)
+        10
+      ];
+      rejected = true;
+      description = "integer at most 10";
+    };
+  };
+
+  # OpenAPI v3.0 (and so CRDs): a boolean flag makes minimum/maximum exclusive.
+  testExclusiveBooleanForm = {
+    expr =
+      let
+        schema = {
+          type = "integer";
+          minimum = 0;
+          exclusiveMinimum = true;
+          maximum = 10;
+          exclusiveMaximum = true;
+        };
+      in
+      {
+        accepted = map (check schema) [
+          1
+          9
+        ];
+        rejected = map (rejects schema) [
+          0
+          10
+        ];
+        description = description schema;
+      };
+    expected = {
+      accepted = [
+        1
+        9
+      ];
+      rejected = [
+        true
+        true
+      ];
+      description = "integer between 1 and 9 (both inclusive)";
+    };
+  };
+
+  testExclusiveBooleanFalseIsInclusive = {
+    expr =
+      map
+        (check {
+          type = "integer";
+          minimum = 0;
+          exclusiveMinimum = false;
+          maximum = 10;
+          exclusiveMaximum = false;
+        })
+        [
+          0
+          10
+        ];
+    expected = [
+      0
+      10
+    ];
+  };
+
+  # JSON Schema 2019-09 / OpenAPI 3.1: the exclusive bound is the number itself.
+  testExclusiveNumericForm = {
+    expr =
+      let
+        schema = {
+          type = "integer";
+          exclusiveMinimum = 0;
+          exclusiveMaximum = 10;
+        };
+      in
+      {
+        accepted = map (check schema) [
+          1
+          9
+        ];
+        rejected = map (rejects schema) [
+          0
+          10
+        ];
+        description = description schema;
+      };
+    expected = {
+      accepted = [
+        1
+        9
+      ];
+      rejected = [
+        true
+        true
+      ];
+      description = "integer between 1 and 9 (both inclusive)";
+    };
+  };
+
+  # With both a numeric exclusive bound and minimum/maximum, both hold.
+  testExclusiveNumericFormWithInclusiveBounds = {
+    expr =
+      let
+        schema = {
+          type = "integer";
+          minimum = 5;
+          exclusiveMinimum = 3;
+          maximum = 8;
+          exclusiveMaximum = 8;
+        };
+      in
+      {
+        accepted = map (check schema) [
+          5
+          7
+        ];
+        rejected = map (rejects schema) [
+          4
+          8
+        ];
+        description = description schema;
+      };
+    expected = {
+      accepted = [
+        5
+        7
+      ];
+      rejected = [
+        true
+        true
+      ];
+      description = "integer between 5 and 7 (both inclusive)";
+    };
+  };
+
+  # An integer bound need not be an integer.
+  testIntegerFractionalBounds = {
+    expr =
+      let
+        schema = {
+          type = "integer";
+          minimum = 0.5;
+          maximum = 2.5;
+        };
+      in
+      {
+        accepted = map (check schema) [
+          1
+          2
+        ];
+        rejected = map (rejects schema) [
+          0
+          3
+        ];
+      };
+    expected = {
+      accepted = [
+        1
+        2
+      ];
+      rejected = [
+        true
+        true
+      ];
+    };
+  };
+
+  # int32 limits still hold next to looser (or one-sided) bounds.
+  testInt32WithBounds = {
+    expr =
+      let
+        schema = int32 // {
+          minimum = 0;
+          maximum = 1000000000000;
+        };
+      in
+      {
+        accepted = map (check schema) [
+          0
+          2147483647
+        ];
+        rejected = map (rejects schema) [
+          (-1)
+          2147483648
+        ];
+        description = description schema;
+      };
+    expected = {
+      accepted = [
+        0
+        2147483647
+      ];
+      rejected = [
+        true
+        true
+      ];
+      description = "integer between 0 and 2147483647 (both inclusive)";
+    };
+  };
+
+  testInt32WithMinimumOnly = {
+    expr =
+      let
+        schema = int32 // {
+          minimum = 1;
+        };
+      in
+      {
+        rejected = rejects schema 2147483648;
+        description = description schema;
+      };
+    expected = {
+      rejected = true;
+      description = "integer between 1 and 2147483647 (both inclusive)";
+    };
+  };
+
+  testNumberBoundsWithFloats = {
+    expr =
+      let
+        schema = {
+          type = "number";
+          minimum = 0.5;
+          maximum = 1.5;
+        };
+      in
+      {
+        accepted = map (check schema) [
+          0.5
+          1
+          1.5
+        ];
+        rejected = map (rejects schema) [
+          0.49
+          1.51
+          2
+          "1"
+        ];
+        description = description schema;
+      };
+    expected = {
+      accepted = [
+        0.5
+        1
+        1.5
+      ];
+      rejected = [
+        true
+        true
+        true
+        true
+      ];
+      description = "integer or floating point number between 0.5 and 1.5 (both inclusive)";
+    };
+  };
+
+  testNumberExclusiveBooleanForm = {
+    expr =
+      let
+        schema = {
+          type = "number";
+          minimum = 0;
+          exclusiveMinimum = true;
+          maximum = 1;
+        };
+      in
+      {
+        accepted = map (check schema) [
+          0.001
+          1
+        ];
+        rejected = map (rejects schema) [
+          0
+          0.0
+          1.001
+        ];
+        description = description schema;
+      };
+    expected = {
+      accepted = [
+        0.001
+        1
+      ];
+      rejected = [
+        true
+        true
+        true
+      ];
+      description = "integer or floating point number greater than 0 and at most 1";
+    };
+  };
+
+  testNumberExclusiveNumericForm = {
+    expr =
+      let
+        schema = {
+          type = "number";
+          exclusiveMinimum = 0;
+          exclusiveMaximum = 1;
+        };
+      in
+      {
+        accepted = check schema 0.5;
+        rejected = map (rejects schema) [
+          0
+          1.0
+        ];
+        description = description schema;
+      };
+    expected = {
+      accepted = 0.5;
+      rejected = [
+        true
+        true
+      ];
+      description = "integer or floating point number between 0 and 1 (both exclusive)";
+    };
+  };
+
+  testNumberMaximumOnlyExclusive = {
+    expr =
+      let
+        schema = {
+          type = "number";
+          maximum = 2.5;
+          exclusiveMaximum = true;
+        };
+      in
+      {
+        accepted = check schema (-100);
+        rejected = rejects schema 2.5;
+        description = description schema;
+      };
+    expected = {
+      accepted = -100;
+      rejected = true;
+      description = "integer or floating point number less than 2.5";
+    };
+  };
+
+  testNumberBoundsOptionalPropertyIsNullOr = {
+    expr =
+      (subOptions {
+        type = "object";
+        properties.ratio = {
+          type = "number";
+          minimum = 0;
+          maximum = 1;
+        };
+      }).ratio.type.description;
+    expected = "null or integer or floating point number between 0 and 1 (both inclusive)";
   };
 
   # arrays
