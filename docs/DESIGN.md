@@ -154,19 +154,22 @@ Maps one **normalized** schema to a `lib.types` value:
 
 | Schema | Type |
 | --- | --- |
-| `x-kubernetes-int-or-string` | `either int str` |
+| `x-kubernetes-int-or-string` | `either int str`, the string side checked as a `string` schema's below |
 | `x-kubernetes-embedded-resource` or `x-kubernetes-preserve-unknown-fields` without `properties` | `attrsOf anything` for objects, else `anything` |
 | `enum` | `enum` of its values |
 | `oneOf`/`anyOf` without `type` | `oneOf` of the branch types (with a `type`, `oneOf`/`anyOf` are CRD "exactly one of" constraints and are ignored) |
 | `type = "string"` | `str` |
+| `minLength`/`maxLength`, `format`, `pattern` on a string | `str` with an `addCheck` for each (in that order), and a `description` naming them: lengths in characters (Unicode code points, as Kubernetes counts them, via `utf8.length`), a `format` from `stringFormat` (others ignored), a `pattern` `lib/pattern.nix` translates (else unchecked, and the description says so) |
 | `type = "integer"` | `int`; `ints.s32` with `format = "int32"` (Kubernetes decodes those into Go `int32`s, which reject or silently wrap larger values; an `int64` is what a Nix int already is) |
 | `type = "number"` | `number` |
 | `minimum`/`maximum` on `integer`/`number` | the type above with an `addCheck` for the bounds, and a `description` naming them |
 | `type = "boolean"` | `bool` |
 | `type = "array"` | `listOf (schemaType items)` (`listOf anything` without `items`) |
+| `minItems`/`maxItems`, `uniqueItems` on an array | the list type with the counts (or no duplicates) checked on the **merged** list, since lists concatenate across definitions |
 | object with `properties` | `submodule` with one option per property; required properties have no default, others are `nullOr t` defaulting to `null`; `description` carried over; `x-kubernetes-preserve-unknown-fields` adds `freeformType = attrsOf anything` |
 | object with schema `additionalProperties` | `attrsOf (schemaType additionalProperties)` |
 | other object / no type | `attrsOf anything` for objects, `anything` without `type` |
+| `minProperties`/`maxProperties` on any object type above | that type with the count of non-null attributes (`render` drops nulls) checked on the merged value |
 
 Property names are used verbatim as option names. Unset optional properties
 come back as `null` (not absent), which `render` strips. In the real spec
@@ -182,11 +185,96 @@ bounds are described as the inclusive ones they equal (`exclusiveMinimum: 0`
 reads "at least 1"), number bounds as e.g. "greater than 0 and at most 1".
 Format and bounds only shape plain
 `integer`/`number` schemas: an `enum` still admits exactly its values,
-`x-kubernetes-int-or-string` stays `either int str`, and each branch of a
-typeless `oneOf` keeps its own. Not checked: `pattern` (ECMA-262 regexes, while
-`builtins.match` is POSIX ERE), string/array/object length limits, other
-`format`s (`byte`, `date-time`, ...), and the int32 range of the real spec's
+`x-kubernetes-int-or-string` stays `either int str` (its string side takes the
+string constraints: CRDs put quantity-style `pattern`s there), and each branch of a
+typeless `oneOf` keeps its own. Not checked: the int32 range of the real spec's
 `IntOrString`, whose `integer` branch declares no `format`.
+
+String, list and object constraints read like the numeric ones:
+``string between 1 and 63 characters long, in k8s-short-name format, matching
+the pattern `^[a-z0-9]([-a-z0-9]*[a-z0-9])?$` ``, `list of string with at most
+2 items, without duplicates`, `attribute set of string with at least 1
+property`, and an untranslatable pattern as ``string (pattern `(?i)^a$` not
+checked)``. Strings are checked per definition (`addCheck`; a string can't be
+merged from parts); lists and objects on the merged value, by wrapping the
+module system's v2 merge (a failure reads ``... is not of type `list of string
+with at most 1 item'. TypeError: The merged value has 2 items.``) and
+`substSubModules`, which the module system uses to rebuild types holding
+submodules. Building a type reads none of the constraint values; checking a
+value does. Lengths are only counted in code points when the byte length
+doesn't already decide them.
+
+### `lib/utf8.nix`
+
+Nix strings are bytes; Kubernetes counts characters. `utf8.length s` is the
+number of code points (bytes less continuation bytes, which `replaceStrings`
+removes — no regex, so any length works), `utf8.isAscii s` whether there are
+no multibyte characters. `continuationMin`/`continuationMax` (80, BF) and
+`leadMin`/`leadMax` (C2, F4) are one-byte strings cut out of multibyte
+characters with `substring` (Nix has no byte escapes), for regex brackets;
+`continuationBytes` lists all 64.
+
+### `lib/pattern.nix` → `pattern.translate p`, `pattern.matcher p`
+
+Kubernetes checks `pattern` with Go's `regexp` (RE2 syntax, Perl flags;
+ECMA-262 in name only), searching anywhere in the value. `builtins.match` is
+libstdc++'s POSIX ERE and matches the whole string. `translate p` parses the
+RE2 pattern and re-emits it as an ERE with the same set of matching strings,
+or returns null:
+
+- Wrapped as `.*(p).*`, dropping the `.*` on a side every top-level branch
+  anchors (`^`/`\A`, `$`/`\z`). Anchors stay anchors anywhere; `$` is
+  end-of-text, as in RE2 without `(?m)`.
+- `\d \D \w \W \s \S` (RE2's ASCII sets; `\s` has no `\v`), inside brackets
+  too; POSIX `[:name:]` and `[:^name:]`; `\xHH`, `\x{H}`, `\a \f \t \n \r \v`,
+  escaped punctuation; `(?:...)` and named groups `(?P<n>...)`/`(?<n>...)` as
+  plain groups; lazy quantifiers as greedy ones (a match exists either way);
+  `{n}`, `{n,}`, `{n,m}` (anything else is a literal `{`, as in RE2).
+- Brackets become sets of ASCII codes, re-emitted in POSIX order (`]` first,
+  `^` not first, `-` last; `\` is literal there).
+- RE2 matches characters, the ERE bytes: `.`, negated classes and other
+  classes admitting non-ASCII characters get a second branch matching one
+  whole multibyte character (a lead byte and its continuations), so `^.{3}$`
+  counts characters.
+- Refused (null): flags `(?i)` etc., `\b \B`, `\p`/`\P` classes, `\Q..\E`,
+  `\C`, octal/backreference digits, lookarounds, non-ASCII pattern text,
+  anything RE2 itself rejects (unbalanced groups, bad ranges, nested
+  quantifiers, counts over 1000), and patterns whose counted repetitions
+  would expand past about 10000 atoms (libstdc++ copies them into its
+  automaton and aborts evaluation past its size limit).
+
+An invalid ERE aborts evaluation instead of throwing, so a translation is
+either valid or null. `matcher p` is `null` for a refused pattern, else a
+predicate; values over `inputLimit` (8192) bytes are accepted unchecked,
+because libstdc++'s backtracking matcher recurses per character and
+overflows the stack on inputs of a few tens of kilobytes. Every distinct
+`pattern` in the CRDs vendored in the pinned `kubernetes-src` (17) translates;
+of 24 common CRD patterns in `tests/unit/pattern.nix` 19 do, the other five
+being exactly the refused features.
+
+### `lib/stringFormat.nix` → `stringFormat.check format`
+
+A predicate for a string `format`, or null if it isn't checked. Names
+normalize like kube-openapi's (dashes dropped: `date-time` = `datetime`).
+The apiextensions-apiserver strips formats outside a fixed list
+(`pkg/apiserver/validation/formats.go`) and validates the rest with
+kube-openapi's `strfmt`; each predicate mirrors that Go code:
+
+- checked: `bsonobjectid`, `byte`, `date`, `datetime`, `duration`,
+  `hostname`, `mac`, `uuid`, `uuid3`, `uuid4`, `uuid5`, `isbn`, `isbn10`,
+  `isbn13`, `creditcard`, `ssn`, `hexcolor`, `rgbcolor`, `k8s-short-name`,
+  `k8s-long-name`;
+- not checked: `password` (anything goes), and `uri`, `email`, `ipv4`,
+  `ipv6`, `cidr`, which need Go's `net/url`, `net/mail` and `net` parsers.
+
+Deliberate leniencies (never a false rejection): `byte` also admits the empty
+string and line breaks, which Go's `encoding/json` accepts for the `[]byte`
+fields of built-in kinds (`Secret.data`); `hostname` doesn't check non-ASCII
+names (its `\p{L}`/`\p{S}` classes are reduced to their ASCII members);
+`duration` ignores `time.ParseDuration`'s overflow beyond 12-digit numbers
+of Greek-mu microseconds. Regex-based checks with no length bound in Go
+(`datetime`, `duration`, `isbn*`, `creditcard`, `rgbcolor`) accept values over
+8192 bytes unchecked; `byte` uses `replaceStrings`, so works at any length.
 
 ### `lib/resourceModule.nix` → `resourceModule.mkResourceModule resources`
 
@@ -372,8 +460,15 @@ gaps below — catenix checks types, not every rule the API server enforces:
   `enum` constraints (the live server publishes them), so fields like
   `imagePullPolicy`, `Service.type`, `restartPolicy` or `pathType` accept any
   string. CRD enums are enforced.
-- **String formats and patterns aren't checked**: base64 (`Secret.data`),
-  quantities (`cpu = "lots"`), names, label syntax, `pattern`, `maxLength`.
+- **Built-in kinds carry few string constraints.** The spec declares only
+  `byte` (`Secret.data`, checked) and `date-time` formats; quantities
+  (`cpu = "lots"`), names and label syntax are Go validation, not schema.
+  CRD `pattern`, lengths, counts and formats are checked, with gaps:
+  patterns using `(?i)`-style flags, `\b` or Unicode classes aren't (the
+  type's description says so), nor are `uri`/`email`/IP formats, nor
+  patterns and unbounded formats on values over 8192 bytes. The regex engine
+  backtracks, unlike RE2, so a pathological pattern (`^(a+)+$`) on a long
+  non-matching value can be slow.
 - **Validation outside the schema** (selector/template label agreement, port
   ranges, duplicate list-map keys, named-port rules) is the server's job.
 - **CRD `metadata` is untyped** when the CRD declares none (the usual case):

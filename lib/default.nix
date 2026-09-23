@@ -2,8 +2,17 @@
 { lib }:
 let
   catenix = {
+    utf8 = import ./utf8.nix { inherit lib; };
+    pattern = import ./pattern.nix {
+      inherit lib;
+      inherit (catenix) utf8;
+    };
+    stringFormat = import ./stringFormat.nix {
+      inherit lib;
+      inherit (catenix) utf8;
+    };
     normalize = import ./normalize.nix { inherit lib; };
-    schemaType = import ./schemaType.nix { inherit lib; };
+    schemaType = import ./schemaType.nix { inherit lib catenix; };
     resourceModule = import ./resourceModule.nix { inherit lib catenix; };
     kubernetes = import ./kubernetes.nix { inherit lib; };
     crd = import ./crd.nix { inherit lib; };

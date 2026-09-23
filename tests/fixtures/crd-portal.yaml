@@ -1,0 +1,56 @@
+# A small CRD with string, list and map constraints, patterned on Gateway API
+# (listener names, hostnames, header names) and a common duration pattern.
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: portals.example.com
+spec:
+  group: example.com
+  scope: Namespaced
+  names:
+    kind: Portal
+    plural: portals
+    singular: portal
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            apiVersion:
+              type: string
+            kind:
+              type: string
+            metadata:
+              type: object
+            spec:
+              type: object
+              required:
+                - listener
+              properties:
+                listener:
+                  type: string
+                  minLength: 1
+                  maxLength: 63
+                  pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                hostnames:
+                  type: array
+                  maxItems: 2
+                  items:
+                    type: string
+                    maxLength: 253
+                    pattern: ^(\*\.)?[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
+                timeout:
+                  type: string
+                  pattern: ^([0-9]{1,5}(h|m|s|ms)){1,4}$
+                headers:
+                  type: object
+                  maxProperties: 2
+                  additionalProperties:
+                    type: string
+                    format: byte
+                caseless:
+                  type: string
+                  pattern: (?i)^yes|no$

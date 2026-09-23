@@ -2,9 +2,12 @@
 #
 # Object properties become submodule options built lazily with `mapAttrs`, so
 # nested types exist only once something (a definition, the docs) asks for them.
-{ lib }:
+# Constraint keywords are read only when a value is checked or the description
+# is shown.
+{ lib, catenix }:
 let
   inherit (lib) types;
+  inherit (catenix) utf8 pattern stringFormat;
 
   isObject = schema: (schema.type or null) == "object";
 
@@ -145,6 +148,197 @@ let
       tightestUpper (upperBounds schema)
     );
 
+  # "at most 3 items", "between 1 and 2 items", "exactly 1 item", ...
+  countPhrase =
+    noun: nouns: min: max:
+    let
+      count = n: "${toString n} ${if n == 1 then noun else nouns}";
+    in
+    if min != null && max != null then
+      if min == max then
+        "exactly ${count min}"
+      else
+        "between ${toString min} and ${toString max} ${nouns}"
+    else if min != null then
+      "at least ${count min}"
+    else
+      "at most ${count max}";
+
+  # A schema's count limits (`minLength`/`maxLength`, ...) as `{ min, max }`,
+  # null where absent; a zero minimum limits nothing.
+  countLimits =
+    minKey: maxKey: schema:
+    let
+      min = schema.${minKey} or 0;
+    in
+    {
+      min = if min > 0 then min else null;
+      max = schema.${maxKey} or null;
+      any = min > 0 || schema ? ${maxKey};
+    };
+
+  withinCount =
+    limits: n: (limits.min == null || n >= limits.min) && (limits.max == null || n <= limits.max);
+
+  # Checks are `{ phrase, check, failure }`: the description's words, a
+  # predicate, and (for merged values) what a failing value "has".
+  describeChecks = checks: lib.concatMapStringsSep ", " (c: c.phrase) checks;
+
+  # `base` with checks on each value (a string can't be merged from parts),
+  # described as "<noun> <phrases> (<notes>)".
+  checkedEach =
+    base: noun: checks: notes:
+    types.addCheck base (x: lib.all (c: c.check x) checks)
+    // {
+      description =
+        noun
+        + lib.optionalString (checks != [ ]) " ${describeChecks checks}"
+        + lib.concatMapStrings (note: " (${note})") notes;
+    };
+
+  # `base` with checks on its merged value: lists concatenate and attribute
+  # sets merge across definitions, so each definition passing isn't enough.
+  # Wraps the module system's v2 merge, so failures read like its own type
+  # errors. The module system rebuilds types holding submodules with
+  # `substSubModules` when declaring an option, so that keeps the checks.
+  checkedMerged =
+    base: checks:
+    let
+      substSubModules = modules: checkedMerged (base.substSubModules modules) checks;
+      description = "${base.description} ${describeChecks checks}";
+      failing = value: lib.findFirst (c: !(c.check value)) null checks;
+      headError =
+        value:
+        let
+          c = failing value;
+        in
+        if c == null then null else { message = "The merged value ${c.failure value}."; };
+    in
+    if checks == [ ] then
+      base
+    else if !(base.merge ? v2) then
+      types.addCheck base (x: failing x == null) // { inherit description substSubModules; }
+    else
+      base
+      // {
+        inherit description substSubModules;
+        merge = {
+          __functor =
+            self: loc: defs:
+            let
+              merged = self.v2 { inherit loc defs; };
+            in
+            if merged.headError != null then
+              throw "A definition for option `${lib.showOption loc}' is not of type `${description}'. TypeError: ${merged.headError.message}"
+            else
+              merged.value;
+          v2 =
+            args:
+            let
+              merged = base.merge.v2 args;
+            in
+            merged
+            // {
+              headError = if merged.headError != null then merged.headError else headError merged.value;
+            };
+        };
+      };
+
+  # minLength/maxLength (in characters, as Kubernetes counts them), a
+  # checked `format` and a translatable `pattern`, cheapest first.
+  stringChecks =
+    schema:
+    let
+      limits = countLimits "minLength" "maxLength" schema;
+      # A string has at most as many characters as bytes, and at least a
+      # quarter as many, so most values are never counted.
+      lengthOk =
+        s:
+        let
+          bytes = builtins.stringLength s;
+          fitsMax = limits.max == null || bytes <= limits.max || utf8.length s <= limits.max;
+          fitsMin =
+            limits.min == null
+            || (bytes >= limits.min && (bytes >= 4 * limits.min || utf8.length s >= limits.min));
+        in
+        fitsMax && fitsMin;
+      formatCheck = stringFormat.check schema.format;
+      matches = pattern.matcher schema.pattern;
+    in
+    lib.optional limits.any {
+      phrase = "${countPhrase "character" "characters" limits.min limits.max} long";
+      check = lengthOk;
+    }
+    ++ lib.optional (schema ? format && formatCheck != null) {
+      phrase = "in ${schema.format} format";
+      check = formatCheck;
+    }
+    ++ lib.optional (schema ? pattern && matches != null) {
+      phrase = "matching the pattern `${schema.pattern}`";
+      check = matches;
+    };
+
+  stringType =
+    schema:
+    if schema ? minLength || schema ? maxLength || schema ? format || schema ? pattern then
+      checkedEach types.str "string" (stringChecks schema) (
+        lib.optional (
+          schema ? pattern && pattern.matcher schema.pattern == null
+        ) "pattern `${schema.pattern}` not checked"
+      )
+    else
+      types.str;
+
+  itemChecks =
+    schema:
+    let
+      limits = countLimits "minItems" "maxItems" schema;
+    in
+    lib.optional limits.any {
+      phrase = "with ${countPhrase "item" "items" limits.min limits.max}";
+      check = list: withinCount limits (builtins.length list);
+      failure = list: "has ${toString (builtins.length list)} items";
+    }
+    ++ lib.optional (schema.uniqueItems or false) {
+      phrase = "without duplicates";
+      check = list: builtins.length (lib.unique list) == builtins.length list;
+      failure = _: "has duplicate items";
+    };
+
+  arrayType =
+    schema:
+    let
+      list = types.listOf (if schema ? items then schemaType schema.items else types.anything);
+    in
+    if schema ? minItems || schema ? maxItems || schema ? uniqueItems then
+      checkedMerged list (itemChecks schema)
+    else
+      list;
+
+  # Kubernetes counts the keys it receives; unset (null) properties are
+  # dropped when rendering.
+  propertyCount = attrs: builtins.length (lib.filter (v: v != null) (builtins.attrValues attrs));
+
+  # minProperties/maxProperties on an object type.
+  withPropertyCounts =
+    schema: base:
+    let
+      limits = countLimits "minProperties" "maxProperties" schema;
+    in
+    if schema ? minProperties || schema ? maxProperties then
+      checkedMerged base (
+        lib.optional limits.any {
+          phrase = "with ${countPhrase "property" "properties" limits.min limits.max}";
+          check = attrs: withinCount limits (propertyCount attrs);
+          failure = attrs: "has ${toString (propertyCount attrs)} properties";
+        }
+      )
+    else
+      base;
+
+  untypedType =
+    schema: if isObject schema then withPropertyCounts schema (untyped schema) else untyped schema;
+
   schemaType =
     schema:
     let
@@ -152,7 +346,7 @@ let
       branches = schema.oneOf or [ ] ++ schema.anyOf or [ ];
     in
     if schema.x-kubernetes-int-or-string or false then
-      types.either types.int types.str
+      types.either types.int (stringType schema)
     else if
       (
         schema.x-kubernetes-embedded-resource or false
@@ -160,7 +354,7 @@ let
       )
       && !(schema ? properties)
     then
-      untyped schema
+      untypedType schema
     else if schema ? enum then
       types.enum schema.enum
     # Next to a `type`, oneOf/anyOf only add value validations (structural
@@ -168,7 +362,7 @@ let
     else if branches != [ ] && type == null then
       types.oneOf (map schemaType branches)
     else if type == "string" then
-      types.str
+      stringType schema
     else if type == "integer" then
       integerType schema
     else if type == "number" then
@@ -176,13 +370,13 @@ let
     else if type == "boolean" then
       types.bool
     else if type == "array" then
-      types.listOf (if schema ? items then schemaType schema.items else types.anything)
+      arrayType schema
     else if type == "object" && schema ? properties then
-      objectType schema
+      withPropertyCounts schema (objectType schema)
     else if type == "object" && lib.isAttrs (schema.additionalProperties or null) then
-      types.attrsOf (schemaType schema.additionalProperties)
+      withPropertyCounts schema (types.attrsOf (schemaType schema.additionalProperties))
     else
-      untyped schema;
+      untypedType schema;
 in
 {
   inherit schemaType;

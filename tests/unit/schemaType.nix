@@ -975,6 +975,651 @@ in
     expected = "null or integer or floating point number between 0 and 1 (both inclusive)";
   };
 
+  # string lengths: minLength / maxLength count characters, not bytes
+
+  testMaxLength = {
+    expr =
+      let
+        schema = {
+          type = "string";
+          maxLength = 3;
+        };
+      in
+      {
+        accepted = map (check schema) [
+          ""
+          "abc"
+          "日本語"
+          "a😀b"
+        ];
+        rejected = map (rejects schema) [
+          "abcd"
+          "日本語x"
+        ];
+        description = description schema;
+      };
+    expected = {
+      accepted = [
+        ""
+        "abc"
+        "日本語"
+        "a😀b"
+      ];
+      rejected = [
+        true
+        true
+      ];
+      description = "string at most 3 characters long";
+    };
+  };
+
+  testMinLength = {
+    expr =
+      let
+        schema = {
+          type = "string";
+          minLength = 2;
+        };
+      in
+      {
+        accepted = check schema "éé";
+        rejected = map (rejects schema) [
+          ""
+          "é"
+        ];
+        description = description schema;
+      };
+    expected = {
+      accepted = "éé";
+      rejected = [
+        true
+        true
+      ];
+      description = "string at least 2 characters long";
+    };
+  };
+
+  testLengthDescriptions = {
+    expr = map description [
+      {
+        type = "string";
+        minLength = 1;
+      }
+      {
+        type = "string";
+        minLength = 1;
+        maxLength = 63;
+      }
+      {
+        type = "string";
+        minLength = 2;
+        maxLength = 2;
+      }
+      {
+        type = "string";
+        maxLength = 1;
+      }
+      # A zero minimum constrains nothing.
+      {
+        type = "string";
+        minLength = 0;
+      }
+    ];
+    expected = [
+      "string at least 1 character long"
+      "string between 1 and 63 characters long"
+      "string exactly 2 characters long"
+      "string at most 1 character long"
+      "string"
+    ];
+  };
+
+  testLengthStillRejectsWrongType = {
+    expr = rejects {
+      type = "string";
+      maxLength = 3;
+    } 1;
+    expected = true;
+  };
+
+  testLengthOptionalPropertyIsNullOr = {
+    expr =
+      let
+        schema = {
+          type = "object";
+          properties.name = {
+            type = "string";
+            maxLength = 3;
+          };
+        };
+      in
+      {
+        absent = check schema { };
+        rejected = rejects schema { name = "long"; };
+        description = (subOptions schema).name.type.description;
+      };
+    expected = {
+      absent.name = null;
+      rejected = true;
+      description = "null or string at most 3 characters long";
+    };
+  };
+
+  # string formats Kubernetes validates
+
+  testFormat = {
+    expr =
+      let
+        schema = {
+          type = "string";
+          format = "date-time";
+        };
+      in
+      {
+        accepted = check schema "2024-01-02T03:04:05Z";
+        rejected = rejects schema "yesterday";
+        description = description schema;
+      };
+    expected = {
+      accepted = "2024-01-02T03:04:05Z";
+      rejected = true;
+      description = "string in date-time format";
+    };
+  };
+
+  testByteFormat = {
+    expr =
+      let
+        schema = {
+          type = "string";
+          format = "byte";
+        };
+      in
+      {
+        accepted = check schema "aGVsbG8=";
+        rejected = rejects schema "hello!";
+      };
+    expected = {
+      accepted = "aGVsbG8=";
+      rejected = true;
+    };
+  };
+
+  # Formats Kubernetes doesn't know (or doesn't check) leave a plain string.
+  testUncheckedFormats = {
+    expr =
+      map
+        (
+          format:
+          let
+            schema = {
+              type = "string";
+              inherit format;
+            };
+          in
+          {
+            accepted = check schema "anything";
+            description = description schema;
+          }
+        )
+        [
+          "password"
+          "made-up"
+          "email"
+        ];
+    expected = lib.genList (_: {
+      accepted = "anything";
+      description = "string";
+    }) 3;
+  };
+
+  # pattern: searched anywhere unless anchored, as Kubernetes does
+
+  testPattern = {
+    expr =
+      let
+        schema = {
+          type = "string";
+          pattern = "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$";
+        };
+      in
+      {
+        accepted = check schema "my-app";
+        rejected = map (rejects schema) [
+          "My-App"
+          "-app"
+          ""
+        ];
+        description = description schema;
+      };
+    expected = {
+      accepted = "my-app";
+      rejected = [
+        true
+        true
+        true
+      ];
+      description = "string matching the pattern `^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`";
+    };
+  };
+
+  testUnanchoredPattern = {
+    expr =
+      let
+        schema = {
+          type = "string";
+          pattern = "[0-9]";
+        };
+      in
+      {
+        accepted = check schema "abc1def";
+        rejected = rejects schema "abc";
+      };
+    expected = {
+      accepted = "abc1def";
+      rejected = true;
+    };
+  };
+
+  # A pattern with no faithful translation is left unchecked, and says so.
+  testUntranslatablePattern = {
+    expr =
+      let
+        schema = {
+          type = "string";
+          pattern = "(?i)^abc$";
+        };
+      in
+      {
+        accepted = check schema "xyz";
+        description = description schema;
+      };
+    expected = {
+      accepted = "xyz";
+      description = "string (pattern `(?i)^abc$` not checked)";
+    };
+  };
+
+  testCombinedStringConstraints = {
+    expr =
+      let
+        schema = {
+          type = "string";
+          minLength = 1;
+          maxLength = 5;
+          format = "k8s-short-name";
+          pattern = "^[a-z]";
+        };
+      in
+      {
+        accepted = check schema "ab-c";
+        rejected = map (rejects schema) [
+          "abcdef"
+          "1abc"
+          "ab-"
+          ""
+        ];
+        description = description schema;
+      };
+    expected = {
+      accepted = "ab-c";
+      rejected = [
+        true
+        true
+        true
+        true
+      ];
+      description = "string between 1 and 5 characters long, in k8s-short-name format, matching the pattern `^[a-z]`";
+    };
+  };
+
+  # Building the type reads no constraint values; checking a value does.
+  testStringConstraintsAreLazy = {
+    expr =
+      (schemaType {
+        type = "string";
+        maxLength = throw "maxLength forced";
+        format = throw "format forced";
+        pattern = throw "pattern forced";
+      }).name;
+    expected = "str";
+  };
+
+  # `enum` lists the allowed values itself.
+  testEnumIgnoresStringConstraints = {
+    expr = check {
+      type = "string";
+      maxLength = 1;
+      enum = [ "long" ];
+    } "long";
+    expected = "long";
+  };
+
+  # String constraints on int-or-string apply to its strings.
+  testIntOrStringStringConstraints = {
+    expr =
+      let
+        schema = intOrString // {
+          pattern = "^[0-9]+%$";
+          maxLength = 4;
+        };
+      in
+      {
+        accepted = map (check schema) [
+          80
+          "50%"
+        ];
+        rejected = map (rejects schema) [
+          "http"
+          "1000%"
+        ];
+        description = description schema;
+      };
+    expected = {
+      accepted = [
+        80
+        "50%"
+      ];
+      rejected = [
+        true
+        true
+      ];
+      description = "signed integer or string at most 4 characters long, matching the pattern `^[0-9]+%$`";
+    };
+  };
+
+  testIntOrStringWithoutConstraintsUnchanged = {
+    expr = description intOrString;
+    expected = (lib.types.either lib.types.int lib.types.str).description;
+  };
+
+  # item counts: minItems / maxItems / uniqueItems
+
+  testItemCounts = {
+    expr =
+      let
+        schema = {
+          type = "array";
+          items.type = "string";
+          minItems = 1;
+          maxItems = 2;
+        };
+      in
+      {
+        accepted = map (check schema) [
+          [ "a" ]
+          [
+            "a"
+            "b"
+          ]
+        ];
+        rejected = map (rejects schema) [
+          [ ]
+          [
+            "a"
+            "b"
+            "c"
+          ]
+        ];
+        description = description schema;
+      };
+    expected = {
+      accepted = [
+        [ "a" ]
+        [
+          "a"
+          "b"
+        ]
+      ];
+      rejected = [
+        true
+        true
+      ];
+      description = "list of string with between 1 and 2 items";
+    };
+  };
+
+  testItemCountDescriptions = {
+    expr = map description [
+      {
+        type = "array";
+        minItems = 1;
+      }
+      {
+        type = "array";
+        maxItems = 3;
+      }
+      {
+        type = "array";
+        minItems = 2;
+        maxItems = 2;
+      }
+      {
+        type = "array";
+        uniqueItems = true;
+      }
+      {
+        type = "array";
+        maxItems = 3;
+        uniqueItems = true;
+      }
+      {
+        type = "array";
+        minItems = 0;
+        uniqueItems = false;
+      }
+    ];
+    expected = [
+      "list of anything with at least 1 item"
+      "list of anything with at most 3 items"
+      "list of anything with exactly 2 items"
+      "list of anything without duplicates"
+      "list of anything with at most 3 items, without duplicates"
+      "list of anything"
+    ];
+  };
+
+  # Lists concatenate across definitions; the merged list is what counts.
+  testMaxItemsCountsMergedList = {
+    expr = helpers.fails (
+      evalDefs
+        {
+          type = "array";
+          items.type = "string";
+          maxItems = 1;
+        }
+        [
+          [ "a" ]
+          [ "b" ]
+        ]
+    );
+    expected = true;
+  };
+
+  testUniqueItems = {
+    expr =
+      let
+        schema = {
+          type = "array";
+          items.type = "string";
+          uniqueItems = true;
+        };
+      in
+      {
+        accepted = check schema [
+          "a"
+          "b"
+        ];
+        rejected = rejects schema [
+          "a"
+          "a"
+        ];
+        mergedRejected = helpers.fails (
+          evalDefs schema [
+            [ "a" ]
+            [ "a" ]
+          ]
+        );
+      };
+    expected = {
+      accepted = [
+        "a"
+        "b"
+      ];
+      rejected = true;
+      mergedRejected = true;
+    };
+  };
+
+  # The module system rebuilds types that hold submodules when declaring an
+  # option; the counts survive that.
+  testItemCountsOnListOfObjects = {
+    expr =
+      let
+        schema = {
+          type = "array";
+          items = gadget;
+          maxItems = 1;
+        };
+      in
+      {
+        accepted = check schema [ { size = 1; } ];
+        rejected = rejects schema [
+          { size = 1; }
+          { size = 2; }
+        ];
+      };
+    expected = {
+      accepted = [
+        {
+          size = 1;
+          color = null;
+        }
+      ];
+      rejected = true;
+    };
+  };
+
+  testItemCountsOptionalPropertyIsNullOr = {
+    expr =
+      let
+        schema = {
+          type = "object";
+          properties.tags = {
+            type = "array";
+            items.type = "string";
+            maxItems = 1;
+          };
+        };
+      in
+      {
+        absent = check schema { };
+        accepted = check schema { tags = [ "a" ]; };
+        rejected = rejects schema {
+          tags = [
+            "a"
+            "b"
+          ];
+        };
+        description = (subOptions schema).tags.type.description;
+      };
+    expected = {
+      absent.tags = null;
+      accepted.tags = [ "a" ];
+      rejected = true;
+      description = "null or (list of string with at most 1 item)";
+    };
+  };
+
+  # property counts: minProperties / maxProperties
+
+  testMapPropertyCounts = {
+    expr =
+      let
+        schema = stringMap // {
+          minProperties = 1;
+          maxProperties = 2;
+        };
+      in
+      {
+        accepted = check schema { a = "x"; };
+        rejected = map (rejects schema) [
+          { }
+          {
+            a = "x";
+            b = "y";
+            c = "z";
+          }
+        ];
+        mergedRejected = helpers.fails (
+          evalDefs schema [
+            {
+              a = "x";
+              b = "y";
+            }
+            { c = "z"; }
+          ]
+        );
+        description = description schema;
+      };
+    expected = {
+      accepted.a = "x";
+      rejected = [
+        true
+        true
+      ];
+      mergedRejected = true;
+      description = "attribute set of string with between 1 and 2 properties";
+    };
+  };
+
+  # Unset (null) properties are dropped when rendering, so they don't count.
+  testObjectPropertyCounts = {
+    expr =
+      let
+        schema = gadget // {
+          maxProperties = 1;
+        };
+      in
+      {
+        accepted = check schema { size = 1; };
+        rejected = rejects schema {
+          size = 1;
+          color = "red";
+        };
+        description = description schema;
+      };
+    expected = {
+      accepted = {
+        size = 1;
+        color = null;
+      };
+      rejected = true;
+      description = "submodule with at most 1 property";
+    };
+  };
+
+  testUntypedObjectPropertyCounts = {
+    expr =
+      let
+        schema = {
+          type = "object";
+          x-kubernetes-preserve-unknown-fields = true;
+          minProperties = 1;
+        };
+      in
+      {
+        accepted = check schema { a = 1; };
+        rejected = rejects schema { };
+        description = description schema;
+      };
+    expected = {
+      accepted.a = 1;
+      rejected = true;
+      description = "attribute set of anything with at least 1 property";
+    };
+  };
+
   # arrays
 
   testArrayOfItems = {

@@ -21,6 +21,9 @@ let
 in
 {
   unit = {
+    utf8 = import ./unit/utf8.nix args;
+    pattern = import ./unit/pattern.nix args;
+    stringFormat = import ./unit/stringFormat.nix args;
     normalize = import ./unit/normalize.nix args;
     schemaType = import ./unit/schemaType.nix args;
     resourceModule = import ./unit/resourceModule.nix args;
