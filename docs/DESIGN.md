@@ -152,8 +152,9 @@ Maps one **normalized** schema to a `lib.types` value:
 | `enum` | `enum` of its values |
 | `oneOf`/`anyOf` without `type` | `oneOf` of the branch types (with a `type`, `oneOf`/`anyOf` are CRD "exactly one of" constraints and are ignored) |
 | `type = "string"` | `str` |
-| `type = "integer"` | `int` |
+| `type = "integer"` | `int`; `ints.s32` with `format = "int32"` (Kubernetes decodes those into Go `int32`s, which reject or silently wrap larger values; an `int64` is what a Nix int already is) |
 | `type = "number"` | `number` |
+| `minimum`/`maximum` on `integer`/`number` | the type above with an `addCheck` for the bounds, and a `description` naming them |
 | `type = "boolean"` | `bool` |
 | `type = "array"` | `listOf (schemaType items)` (`listOf anything` without `items`) |
 | object with `properties` | `submodule` with one option per property; required properties have no default, others are `nullOr t` defaulting to `null`; `description` carried over; `x-kubernetes-preserve-unknown-fields` adds `freeformType = attrsOf anything` |
@@ -164,6 +165,21 @@ Property names are used verbatim as option names. Unset optional properties
 come back as `null` (not absent), which `render` strips. In the real spec
 `IntOrString` is a typeless `oneOf [integer string]` and `Quantity` a typeless
 `oneOf [string number]`, both covered by the `oneOf` row.
+
+Bounds are made exclusive by OpenAPI v3.0's (and so CRDs') boolean
+`exclusiveMinimum`/`exclusiveMaximum`, or given as numbers in those keys (JSON
+Schema 2019-09, OpenAPI 3.1); the tightest of several wins, and `int32` limits
+combine with them. Module errors quote the description, e.g. ``is not of type
+`null or integer between 1 and 10 (both inclusive)'``; exclusive integer
+bounds are described as the inclusive ones they equal (`exclusiveMinimum: 0`
+reads "at least 1"), number bounds as e.g. "greater than 0 and at most 1".
+Format and bounds only shape plain
+`integer`/`number` schemas: an `enum` still admits exactly its values,
+`x-kubernetes-int-or-string` stays `either int str`, and each branch of a
+typeless `oneOf` keeps its own. Not checked: `pattern` (ECMA-262 regexes, while
+`builtins.match` is POSIX ERE), string/array/object length limits, other
+`format`s (`byte`, `date-time`, ...), and the int32 range of the real spec's
+`IntOrString`, whose `integer` branch declares no `format`.
 
 ### `lib/resourceModule.nix` → `resourceModule.mkResourceModule resources`
 
