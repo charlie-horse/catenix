@@ -275,4 +275,29 @@ in
     );
     expected = true;
   };
+
+  # yq warns on stderr about merge keys; the warning must not reach the output,
+  # and keys written next to a merge override the merged ones, per the spec.
+  testMergeKeys = {
+    expr = fromText "merge.yaml" ''
+      base: &base
+        x: 1
+        y: 1
+      obj:
+        <<: *base
+        y: 2
+    '';
+    expected = [
+      {
+        base = {
+          x = 1;
+          y = 1;
+        };
+        obj = {
+          x = 1;
+          y = 2;
+        };
+      }
+    ];
+  };
 }

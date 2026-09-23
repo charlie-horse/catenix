@@ -14,10 +14,13 @@ let
   baseName = baseNameOf (toString yamlFile);
   fileName = if lib.isStorePath yamlFile then lib.substring 33 (-1) baseName else baseName;
 
-  json = pkgs.runCommand (lib.strings.sanitizeDerivationName "${fileName}.json") {
-    nativeBuildInputs = [ pkgs.yq-go ];
-    inherit yamlFile;
-  } ''yq -o=json -I=0 eval-all '[.]' "$yamlFile" > "$out" 2>&1 || true'';
+  json =
+    pkgs.runCommand (lib.strings.sanitizeDerivationName "${fileName}.json")
+      {
+        nativeBuildInputs = [ pkgs.yq-go ];
+        inherit yamlFile;
+      }
+      ''yq --yaml-fix-merge-anchor-to-spec -o=json -I=0 eval-all '[.]' "$yamlFile" > "$out" 2> err || cp err "$out"'';
 
   output = builtins.readFile json;
 in

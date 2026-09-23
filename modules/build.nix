@@ -15,9 +15,11 @@ in
       type = types.listOf (types.attrsOf types.anything);
       readOnly = true;
       description = ''
-        The plain Kubernetes manifests of `resources`, sorted by group,
-        version, kind and name, with `apiVersion`, `kind` and `metadata.name`
-        filled in and unset (`null`) fields dropped.
+        The plain Kubernetes manifests of `resources`, with `apiVersion`,
+        `kind` and `metadata.name` filled in and unset (`null`) fields
+        dropped. Namespaces come first, then CustomResourceDefinitions, then
+        everything else sorted by group, version, kind and name, so the list
+        applies in one pass.
       '';
     };
 
