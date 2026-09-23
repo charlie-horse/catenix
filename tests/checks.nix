@@ -11,14 +11,10 @@
   nixpkgs,
   kubernetes-src,
   self,
+  system,
 }:
 let
-  tests = import ./. {
-    inherit lib pkgs;
-    catenix = self.lib;
-    kubernetesSrc = kubernetes-src;
-    catenixModule = self.nixosModules.default;
-  };
+  tests = self.tests.${system};
 
   nixUnit =
     name: path:
@@ -28,7 +24,7 @@ let
         --extra-experimental-features "nix-command flakes" \
         --override-input nixpkgs ${nixpkgs} \
         --override-input kubernetes-src ${kubernetes-src} \
-        --flake ${self}#tests.${path}
+        --flake ${self}#tests.${system}.${path}
       touch $out
     '';
 

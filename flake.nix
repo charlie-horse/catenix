@@ -34,12 +34,15 @@
         kubernetesSrc = kubernetes-src;
       };
 
-      tests = import ./tests {
-        inherit lib catenix;
-        pkgs = pkgsFor "x86_64-linux";
-        kubernetesSrc = kubernetes-src;
-        catenixModule = self.nixosModules.default;
-      };
+      tests = forAllSystems (
+        system:
+        import ./tests {
+          inherit lib catenix;
+          pkgs = pkgsFor system;
+          kubernetesSrc = kubernetes-src;
+          catenixModule = self.nixosModules.default;
+        }
+      );
 
       checks = forAllSystems (
         system:
@@ -49,6 +52,7 @@
             nixpkgs
             kubernetes-src
             self
+            system
             ;
           pkgs = pkgsFor system;
         }

@@ -70,7 +70,7 @@ nix run github:charlie-horse/catenix#render -- ./app.nix | kubectl apply -f -
 | --- | --- |
 | `lib` | Every `lib/*.nix` unit, keyed by file name (`lib/default.nix`). System-agnostic: units that build derivations take `pkgs` as an argument. |
 | `nixosModules.default` | `modules/resources.nix` + `modules/build.nix` + core Kubernetes types from the pinned `kubernetes-src`. Callers run their own `lib.evalModules` and must provide `pkgs` as a module argument (`specialArgs` or `_module.args.pkgs`); see [Usage](#usage). |
-| `tests` | Every suite as nix-unit `{ expr, expected }` cases (`tests/default.nix`). Run one with `nix-unit --flake .#tests.unit.normalize`. |
+| `tests.<system>` | Every suite as nix-unit `{ expr, expected }` cases (`tests/default.nix`), per system since some suites build derivations. Run one with `nix-unit --flake .#tests.x86_64-linux.unit.normalize`. |
 | `checks.<system>` | One named check per suite (`tests/checks.nix`). |
 | `apps.<system>.render` | `nix run .#render -- <path-to-module.nix>` evaluates that module file with `nixosModules.default` (`pkgs` and `catenix` in `specialArgs`) and prints its `config.build.yaml` (`apps/render.nix`, `apps/renderModule.nix`). |
 | `devShells.<system>.default` | `nix-unit`, `yq-go`, `nixfmt`, `jq`. |
@@ -300,7 +300,7 @@ it on `examples/`.
    commit, re-run integration/e2e.
 2. Repeat until every check is green, then write `examples/` (illustrative only).
 
-Fast loop: `nix develop -c nix-unit --flake .#tests.unit.<unit>`.
+Fast loop: `nix develop -c nix-unit --flake .#tests.<system>.unit.<unit>`.
 
 ## Known limitations
 
