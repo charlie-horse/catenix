@@ -3,6 +3,18 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    flake-parts = {
+      url = "github:hercules-ci/flake-parts";
+      inputs.nixpkgs-lib.follows = "nixpkgs";
+    };
+    nix-unit = {
+      url = "github:nix-community/nix-unit";
+      inputs.nixpkgs.follows = "nixpkgs";
+      # Only used by nix-unit's own dev tooling; pointed at this flake so they
+      # are never fetched.
+      inputs.treefmt-nix.follows = "";
+      inputs.nix-github-actions.follows = "";
+    };
     kubernetes-src = {
       url = "git+https://github.com/kubernetes/kubernetes?ref=refs/tags/v1.37.0&shallow=1";
       flake = false;
@@ -10,78 +22,47 @@
   };
 
   outputs =
-    {
-      self,
-      nixpkgs,
-      kubernetes-src,
-    }:
-    let
-      inherit (nixpkgs) lib;
-      forAllSystems = lib.genAttrs [
-        "x86_64-linux"
-        "aarch64-linux"
-        "x86_64-darwin"
-        "aarch64-darwin"
-      ];
-      pkgsFor = system: nixpkgs.legacyPackages.${system};
-      catenix = import ./lib { inherit lib; };
-    in
-    {
-      lib = catenix;
+    inputs@{ flake-parts, ... }:
+    flake-parts.lib.mkFlake { inherit inputs; } (
+      { self, lib, ... }:
+      {
+        systems = [
+          "x86_64-linux"
+          "aarch64-linux"
+          "x86_64-darwin"
+          "aarch64-darwin"
+        ];
 
-      nixosModules.default = import ./modules/default.nix {
-        inherit catenix;
-        kubernetesSrc = kubernetes-src;
-      };
+        imports = [
+          inputs.nix-unit.modules.flake.default
+          ./tests/flake-module.nix
+        ];
 
-      tests = forAllSystems (
-        system:
-        import ./tests {
-          inherit lib catenix;
-          pkgs = pkgsFor system;
-          kubernetesSrc = kubernetes-src;
-          catenixModule = self.nixosModules.default;
-        }
-      );
+        flake = {
+          lib = import ./lib { inherit lib; };
 
-      checks = forAllSystems (
-        system:
-        import ./tests/checks.nix {
-          inherit
-            lib
-            nixpkgs
-            kubernetes-src
-            self
-            system
-            ;
-          pkgs = pkgsFor system;
-        }
-      );
-
-      apps = forAllSystems (system: {
-        render = import ./apps/render.nix {
-          inherit self;
-          pkgs = pkgsFor system;
-        };
-      });
-
-      devShells = forAllSystems (
-        system:
-        let
-          pkgs = pkgsFor system;
-        in
-        {
-          default = pkgs.mkShell {
-            packages = [
-              pkgs.nix-unit
-              pkgs.yq-go
-              pkgs.nixfmt
-              pkgs.jq
-            ];
+          nixosModules.default = import ./modules/default.nix {
+            catenix = self.lib;
+            kubernetesSrc = inputs.kubernetes-src;
           };
-        }
-      );
+        };
 
-      formatter = forAllSystems (system: (pkgsFor system).nixfmt);
-    };
+        perSystem =
+          { pkgs, ... }:
+          {
+            apps.render = import ./apps/render.nix { inherit pkgs self; };
+
+            devShells.default = pkgs.mkShell {
+              packages = [
+                pkgs.nix-unit
+                pkgs.yq-go
+                pkgs.nixfmt
+                pkgs.jq
+              ];
+            };
+
+            formatter = pkgs.nixfmt;
+          };
+      }
+    );
 }

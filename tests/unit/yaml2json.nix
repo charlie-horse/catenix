@@ -1,5 +1,5 @@
 # Unit tests for lib/yaml2json.nix. Every case builds a derivation and reads it
-# back (import-from-derivation), so tests/checks.nix runs this suite at
+# back (import-from-derivation), so tests/flake-module.nix runs this suite at
 # evaluation time rather than under nix-unit in a sandbox.
 {
   catenix,

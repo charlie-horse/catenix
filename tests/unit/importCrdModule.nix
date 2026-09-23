@@ -1,5 +1,5 @@
 # Unit tests for lib/importCrdModule.nix: the resource module for the CRDs in
-# a YAML file. Parsing YAML is import-from-derivation, so tests/checks.nix runs
+# a YAML file. Parsing YAML is import-from-derivation, so tests/flake-module.nix runs
 # this suite at evaluation time rather than under nix-unit in a sandbox.
 {
   lib,

@@ -70,27 +70,31 @@ nix run github:charlie-horse/catenix#render -- ./app.nix | kubectl apply -f -
 | --- | --- |
 | `lib` | Every `lib/*.nix` unit, keyed by file name (`lib/default.nix`). System-agnostic: units that build derivations take `pkgs` as an argument. |
 | `nixosModules.default` | `modules/resources.nix` + `modules/build.nix` + core Kubernetes types from the pinned `kubernetes-src`. Callers run their own `lib.evalModules` and must provide `pkgs` as a module argument (`specialArgs` or `_module.args.pkgs`); see [Usage](#usage). |
-| `tests.<system>` | Every suite as nix-unit `{ expr, expected }` cases (`tests/default.nix`), per system since some suites build derivations. Run one with `nix-unit --flake .#tests.x86_64-linux.unit.normalize`. |
-| `checks.<system>` | One named check per suite (`tests/checks.nix`). |
+| `tests.systems.<system>` | The sandbox-safe suites as nix-unit `{ expr, expected }` cases, set by nix-unit's flake-parts module from `perSystem.nix-unit.tests` (`tests/flake-module.nix`). Run one with `nix-unit --flake .#tests.systems.x86_64-linux.unit.normalize`. |
+| `legacyPackages.<system>.evalTimeTests` | The suites that build derivations during evaluation (`unit.yaml2json`, `unit.toYaml`, `unit.importCrdModule`, `integration.*`, `e2e.*`). Run one with `nix-unit --flake .#legacyPackages.x86_64-linux.evalTimeTests.e2e.realSpec`. |
+| `checks.<system>` | `nix-unit` (every sandbox-safe suite, from nix-unit's module) plus one named check per eval-time suite (`unit-yaml2json`, …, `e2e-real-crd`). |
 | `apps.<system>.render` | `nix run .#render -- <path-to-module.nix>` evaluates that module file with `nixosModules.default` (`pkgs` and `catenix` in `specialArgs`) and prints its `config.build.yaml` (`apps/render.nix`, `apps/renderModule.nix`). |
 | `devShells.<system>.default` | `nix-unit`, `yq-go`, `nixfmt`, `jq`. |
 | `formatter.<system>` | `nixfmt`. |
 
 ## Dependency policy
 
-Flake inputs: `nixpkgs` and `kubernetes-src`. Everything else is a `builtins`
-primop or comes from nixpkgs.
+Flake inputs: `nixpkgs`, `kubernetes-src`, `flake-parts` and `nix-unit`.
+Everything else is a `builtins` primop or comes from nixpkgs.
 
-- **nix-unit** — test runner, taken from nixpkgs (`pkgs.nix-unit`) rather than
-  as its own flake input. Checks wrap it in a `runCommand`, per nix-unit's
-  flake example; no flake-composition framework.
+- **flake-parts** — the flake is a `flake-parts.lib.mkFlake` module
+  (`systems`, `perSystem`, `flake`), and it's how nix-unit's own flake module
+  plugs in. `nixpkgs-lib` follows `nixpkgs`.
+- **nix-unit** — test runner. The flake input provides its flake-parts module
+  (`nix-unit.modules.flake.default`); the binary comes from nixpkgs
+  (`nix-unit.package = pkgs.nix-unit`) so it isn't built from source.
+  `nixpkgs` follows ours, and its dev-only inputs (`treefmt-nix`,
+  `nix-github-actions`) follow `""` so they're never fetched.
 - **yq-go** (nixpkgs) — Nix has no YAML parser or encoder: CRDs ship as YAML,
   and manifests are rendered to it. Scoped to `lib/yaml2json.nix` and
   `render.toYaml`. (`pkgs.formats.yaml` isn't used: its encoder, remarshal
   with PyYAML, leaves strings like `08` and `0o17` unquoted, which Kubernetes'
   Go-based parser reads as numbers.)
-
-No general-purpose flake framework: `lib.genAttrs` covers per-system outputs.
 
 `kubernetes-src` is a `git+https://github.com/...?ref=refs/tags/<tag>&shallow=1`
 input rather than `github:`: Kubernetes marks `hack/lib/version.sh` as
@@ -100,11 +104,13 @@ egress). Bump it by editing the tag and running `nix flake update kubernetes-src
 
 ## Checks: two runners, one test format
 
-Pure suites run under nix-unit inside a derivation. Suites that read a
-derivation's output back during evaluation (YAML→JSON, YAML encoding, CRD
-import, anything asserting rendered YAML) can't build inside that sandbox, so
-`tests/checks.nix` evaluates them during `nix flake check` itself with
-`lib.debug.runTests`. Both runners read the same `{ expr, expected }` cases.
+Pure suites go to `perSystem.nix-unit.tests`; nix-unit's flake-parts module
+runs them in the sandboxed `checks.<system>.nix-unit`, with the flake inputs
+passed in through `nix-unit.inputs`. Suites that read a derivation's output
+back during evaluation (YAML→JSON, YAML encoding, CRD import, anything
+asserting rendered YAML) can't build inside that sandbox, so
+`tests/flake-module.nix` evaluates them during `nix flake check` itself with
+`lib.debug.runTests`, one named check per suite. Both runners read the same `{ expr, expected }` cases.
 Failure cases use `helpers.fails value` (deep `tryEval`) with
 `expected = true`, which works under both runners. Test names start with
 `test`.
@@ -317,7 +323,7 @@ it on `examples/`.
    commit, re-run integration/e2e.
 2. Repeat until every check is green, then write `examples/` (illustrative only).
 
-Fast loop: `nix develop -c nix-unit --flake .#tests.<system>.unit.<unit>`.
+Fast loop: `nix develop -c nix-unit --flake .#tests.systems.<system>.unit.<unit>`.
 
 ## Known limitations
 
