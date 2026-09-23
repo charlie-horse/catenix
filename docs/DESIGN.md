@@ -96,7 +96,7 @@ Maps one **normalized** schema to a `lib.types` value:
 | `x-kubernetes-int-or-string` | `either int str` |
 | `x-kubernetes-embedded-resource` or `x-kubernetes-preserve-unknown-fields` without `properties` | `attrsOf anything` for objects, else `anything` |
 | `enum` | `enum` of its values |
-| `oneOf`/`anyOf` | `oneOf` of the branch types |
+| `oneOf`/`anyOf` without `type` | `oneOf` of the branch types (with a `type`, `oneOf`/`anyOf` are CRD "exactly one of" constraints and are ignored) |
 | `type = "string"` | `str` |
 | `type = "integer"` | `int` |
 | `type = "number"` | `number` |
@@ -106,7 +106,10 @@ Maps one **normalized** schema to a `lib.types` value:
 | object with schema `additionalProperties` | `attrsOf (schemaType additionalProperties)` |
 | other object / no type | `attrsOf anything` for objects, `anything` without `type` |
 
-Property names are used verbatim as option names.
+Property names are used verbatim as option names. Unset optional properties
+come back as `null` (not absent), which `render` strips. In the real spec
+`IntOrString` is a typeless `oneOf [integer string]` and `Quantity` a typeless
+`oneOf [string number]`, both covered by the `oneOf` row.
 
 ### `lib/resourceModule.nix` → `resourceModule.mkResourceModule resources`
 
@@ -125,7 +128,10 @@ schema with `x-kubernetes-group-version-kind`, skipping `*List` kinds and
 kinds whose scope can't be determined. Scope comes from discovery for named
 groups when available, otherwise from `paths` (`/api/<v>/<plural>` or
 `/apis/<g>/<v>/<plural>` → cluster, `.../namespaces/{namespace}/<plural>` →
-namespaced, matched on the operation's `x-kubernetes-group-version-kind`).
+namespaced, matched on the operation's `x-kubernetes-group-version-kind`; a
+namespaced path wins, since namespaced kinds are also listed at their
+all-namespaces path). Discovery is consulted per kind: a named-group kind
+missing from it falls back to `paths`, and core-group entries are ignored.
 `definitions` is the document's `components.schemas`. Duplicate
 group/version/kind throws; no resources throws.
 
@@ -143,7 +149,9 @@ CRDs at all.
 
 Returns the list of documents in a (multi-document) YAML file, via `yq` in a
 `runCommand` read back with `builtins.fromJSON` (import-from-derivation).
-Empty documents are dropped.
+Empty documents are dropped. The builder never fails: yq's error text becomes
+the output and is rethrown as a Nix `throw`, because a failed
+import-from-derivation build can't be caught by `builtins.tryEval`.
 
 ### `lib/render.nix`
 
@@ -155,7 +163,11 @@ Empty documents are dropped.
   `resources.<group>.<version>.<Kind>.<name>` into a list of manifests (sorted
   by group, version, kind, name).
 - `toYaml pkgs manifests` — derivation of a multi-document YAML file (`---`
-  separated), via `pkgs.formats.yaml`.
+  separated). Each manifest goes through `pkgs.formats.yaml { }` (YAML 1.1,
+  so strings like `on`/`yes` get quoted, which Kubernetes' YAML 1.1 parser
+  needs); one `runCommand` drops each file's `%YAML`/`---` header and joins
+  them, since the generator writes one document per file. Lists are indented
+  level with their key.
 
 ### `lib/mkKubernetesModule.nix` → `mkKubernetesModule { kubernetesSrc }`
 

@@ -54,10 +54,10 @@ in
               app: web
           spec:
             containers:
-              - image: nginx:1.27
-                name: web
-                ports:
-                  - containerPort: 80
+            - image: nginx:1.27
+              name: web
+              ports:
+              - containerPort: 80
       ---
       apiVersion: v1
       data:
