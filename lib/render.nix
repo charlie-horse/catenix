@@ -84,24 +84,44 @@ let
       }
     ) (lib.sortOn rank instances);
 
+  # NEL, LS and PS: JSON allows them raw in strings, but YAML reads them as
+  # line breaks, so they're turned into JSON escapes before yq reads JSON as
+  # YAML. (The rest of JSON's structure is ASCII, so only strings change.)
+  escapeYamlLineBreaks =
+    let
+      escapes = [
+        "\\u0085"
+        "\\u2028"
+        "\\u2029"
+      ];
+    in
+    builtins.replaceStrings (map (e: builtins.fromJSON ''"${e}"'') escapes) escapes;
+
+  # Strings YAML 1.1 reads as something else but yq's encoder, going by YAML
+  # 1.2, would leave plain: booleans (`yes`, `on`, ...; in any case, as yq's
+  # `-P` matches them) and base 60 numbers (`12:30`; go-yaml's regex). These
+  # are the extra strings go-yaml's own encoder quotes.
+  yaml11Scalar = "^(?i:y|yes|n|no|on|off)$|^[-+]?[0-9][0-9_]*(?::[0-5]?[0-9])+(?:\\.[0-9_]*)?$";
+
+  # yq reads the JSON as YAML (`-p json` would turn numbers into floats and
+  # lose big ints) and writes it back as block YAML once every node's style
+  # is reset (JSON's are flow maps and double-quoted strings), except that
+  # `yaml11Scalar` strings keep their double quotes. yq's encoder quotes every
+  # other string that would read back as something else (`08`, `0o17`,
+  # `true`, `<<`, ...) and writes multi-line strings as literal blocks. `-c`
+  # puts sequence dashes at their key's indentation; `split_doc` makes each
+  # manifest its own `---`-separated document. Keys keep Nix's (sorted)
+  # attribute order.
   toYaml =
     pkgs: manifests:
-    let
-      # YAML 1.1 quotes strings like `on`/`yes` that Kubernetes' parser would
-      # otherwise read as booleans.
-      inherit (pkgs.formats.yaml { }) generate;
-      documents = lib.imap0 (i: generate "manifest-${toString i}.yaml") manifests;
-    in
-    # remarshal starts each file with a "%YAML 1.1" directive and a "---"
-    # marker; drop those and put one "---" line between documents.
-    pkgs.runCommand "manifests.yaml" { inherit documents; } ''
-      sep=
-      for doc in $documents; do
-        printf '%s' "$sep"
-        sed '1,2{/^%YAML /d; /^---$/d}' "$doc"
-        sep=$'---\n'
-      done > "$out"
-    '';
+    pkgs.runCommand "manifests.yaml"
+      {
+        nativeBuildInputs = [ pkgs.yq-go ];
+        json = escapeYamlLineBreaks (builtins.toJSON manifests);
+        passAsFile = [ "json" ];
+        inherit yaml11Scalar;
+      }
+      ''yq -p yaml -o yaml -c '(... | select(tag != "!!str" or (test(strenv(yaml11Scalar)) | not))) style = "" | .[] | split_doc' "$jsonPath" > "$out"'';
 in
 {
   inherit

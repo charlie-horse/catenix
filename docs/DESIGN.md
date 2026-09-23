@@ -84,10 +84,11 @@ primop or comes from nixpkgs.
 - **nix-unit** — test runner, taken from nixpkgs (`pkgs.nix-unit`) rather than
   as its own flake input. Checks wrap it in a `runCommand`, per nix-unit's
   flake example; no flake-composition framework.
-- **yq-go** (nixpkgs) — Nix has no YAML parser and CRDs ship as YAML. Scoped to
-  `lib/yaml2json.nix`.
-- **`pkgs.formats.yaml`** (nixpkgs) — Nix has no YAML encoder. Scoped to
-  `render.toYaml`.
+- **yq-go** (nixpkgs) — Nix has no YAML parser or encoder: CRDs ship as YAML,
+  and manifests are rendered to it. Scoped to `lib/yaml2json.nix` and
+  `render.toYaml`. (`pkgs.formats.yaml` isn't used: its encoder, remarshal
+  with PyYAML, leaves strings like `08` and `0o17` unquoted, which Kubernetes'
+  Go-based parser reads as numbers.)
 
 No general-purpose flake framework: `lib.genAttrs` covers per-system outputs.
 
@@ -232,12 +233,23 @@ import-from-derivation build can't be caught by `builtins.tryEval`.
   `CustomResourceDefinition`s, then everything else, each part sorted by group,
   version, kind, name. `kubectl apply -f` creates objects in file order, so a
   fresh apply finds namespaces and CRDs before the objects that need them.
-- `toYaml pkgs manifests` — derivation of a multi-document YAML file (`---`
-  separated). Each manifest goes through `pkgs.formats.yaml { }` (YAML 1.1,
-  so strings like `on`/`yes` get quoted, which Kubernetes' YAML 1.1 parser
-  needs); one `runCommand` drops each file's `%YAML`/`---` header and joins
-  them, since the generator writes one document per file. Lists are indented
-  level with their key.
+- `toYaml pkgs manifests` — derivation of a multi-document YAML file, one
+  `---`-separated document per manifest (empty for none). A `runCommand` runs
+  one `yq` over `builtins.toJSON manifests`, read as YAML: JSON is YAML, and
+  unlike yq's JSON reader (which turns numbers into floats) that keeps number
+  literals exact. NEL, LS and PS are escaped first, since JSON allows them raw
+  in strings and YAML reads them as line breaks. yq resets every node's style
+  (block YAML) except on strings YAML 1.1 reads as booleans (`yes`, `on`, ...)
+  or base 60 numbers (`12:30`), which keep JSON's double quotes, and its
+  encoder quotes every other string that would read back as something else
+  (`08`, `0o17`, `true`, `<<`, ...): Kubernetes' parser (`sigs.k8s.io/yaml`,
+  goyaml.v2) reads YAML 1.1 booleans and Go's number syntax, and go-yaml's own
+  encoder also quotes base 60. Multi-line strings become literal blocks (`|`,
+  `|-`, `|+`), or double-quoted when a line has trailing spaces or a CR. Keys
+  keep Nix's sorted order, lists are indented level with their key (`-c`),
+  long lines aren't folded. The quoting was checked against
+  `sigs.k8s.io/yaml` on an adversarial corpus; `tests/unit/toYaml.nix` keeps
+  the cases.
 
 ### `lib/mkKubernetesModule.nix` → `mkKubernetesModule { kubernetesSrc }`
 
