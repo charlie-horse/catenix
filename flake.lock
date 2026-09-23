@@ -1,0 +1,46 @@
+{
+  "nodes": {
+    "kubernetes-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1787741060,
+        "narHash": "sha256-FQ4qajAPLCb4a/qOavqE7NuylrfObJfZSE8WG7SKM68=",
+        "ref": "refs/tags/v1.37.0",
+        "rev": "f54c212e3a2f75d674b717a9b29052b20b60aefc",
+        "shallow": true,
+        "type": "git",
+        "url": "https://github.com/kubernetes/kubernetes"
+      },
+      "original": {
+        "ref": "refs/tags/v1.37.0",
+        "shallow": true,
+        "type": "git",
+        "url": "https://github.com/kubernetes/kubernetes"
+      }
+    },
+    "nixpkgs": {
+      "locked": {
+        "lastModified": 1790046670,
+        "narHash": "sha256-MYiI+CzL0tuWgRPjGsKCDHqYs2T3OzMlMQWOYWG0qso=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "6774f7bc253789b113a4f39285dc0fa100abeacc",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "ref": "nixos-unstable",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
+    "root": {
+      "inputs": {
+        "kubernetes-src": "kubernetes-src",
+        "nixpkgs": "nixpkgs"
+      }
+    }
+  },
+  "root": "root",
+  "version": 7
+}
