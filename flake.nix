@@ -55,20 +55,9 @@
       );
 
       apps = forAllSystems (system: {
-        render = {
-          type = "app";
-          program = lib.getExe (
-            (pkgsFor system).writeShellApplication {
-              name = "catenix-render";
-              text = ''
-                if [ $# -ne 1 ]; then
-                  echo "usage: nix run .#render -- <flake-ref-to-a-catenix-evaluation>" >&2
-                  exit 1
-                fi
-                cat "$(nix build --no-link --print-out-paths "$1.config.build.yaml")"
-              '';
-            }
-          );
+        render = import ./apps/render.nix {
+          inherit self;
+          pkgs = pkgsFor system;
         };
       });
 

@@ -10,15 +10,69 @@ Guiding rules: prefer native Nix/flake mechanisms; add a dependency only when
 nothing native covers the need; one unit of responsibility per file; avoid
 non-Nix code; strict TDD (see below).
 
+## Usage
+
+Resources are declared in ordinary modules as
+`resources.<group|core>.<version>.<Kind>.<name>`, composed with
+`nixosModules.default` in a `lib.evalModules` call that provides `pkgs`.
+`config.build.yaml` is the rendered multi-document YAML file,
+`config.build.manifests` the same manifests as Nix values. See `examples/`.
+
+From another flake:
+
+```nix
+{
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    catenix.url = "github:charlie-horse/catenix";
+    catenix.inputs.nixpkgs.follows = "nixpkgs";
+  };
+
+  outputs =
+    { nixpkgs, catenix, ... }:
+    let
+      pkgs = nixpkgs.legacyPackages.x86_64-linux;
+      app = nixpkgs.lib.evalModules {
+        modules = [
+          catenix.nixosModules.default
+          ./app.nix
+        ];
+        specialArgs = {
+          inherit pkgs;
+          catenix = catenix.lib;
+        };
+      };
+    in
+    {
+      # nix build .#manifests && kubectl apply -f result
+      packages.x86_64-linux.manifests = app.config.build.yaml;
+    };
+}
+```
+
+`pkgs` can also be set with `{ _module.args.pkgs = pkgs; }` in `modules`, but
+`_module.args` can't be used in `imports`, so a module that imports a CRD
+(`imports = [ (catenix.importCrdModule { inherit pkgs; crdFile = ./crd.yaml; }) ]`)
+needs `pkgs` and `catenix` in `specialArgs`. With `_module.args`, pass the CRD
+module in `modules` directly instead.
+
+Without a flake of your own, the `render` app evaluates a module file the same
+way (`pkgs` and `catenix` in `specialArgs`) and prints the YAML; type errors
+exit non-zero:
+
+```sh
+nix run github:charlie-horse/catenix#render -- ./app.nix | kubectl apply -f -
+```
+
 ## Flake outputs
 
 | Output | Contents |
 | --- | --- |
 | `lib` | Every `lib/*.nix` unit, keyed by file name (`lib/default.nix`). System-agnostic: units that build derivations take `pkgs` as an argument. |
-| `nixosModules.default` | `modules/resources.nix` + `modules/build.nix` + core Kubernetes types from the pinned `kubernetes-src`. Callers run their own `lib.evalModules` and must provide `pkgs` as a module argument (`_module.args.pkgs`). |
+| `nixosModules.default` | `modules/resources.nix` + `modules/build.nix` + core Kubernetes types from the pinned `kubernetes-src`. Callers run their own `lib.evalModules` and must provide `pkgs` as a module argument (`specialArgs` or `_module.args.pkgs`); see [Usage](#usage). |
 | `tests` | Every suite as nix-unit `{ expr, expected }` cases (`tests/default.nix`). Run one with `nix-unit --flake .#tests.unit.normalize`. |
 | `checks.<system>` | One named check per suite (`tests/checks.nix`). |
-| `apps.<system>.render` | `nix run .#render -- <flake-ref-to-an-evaluation>` prints its `config.build.yaml`. |
+| `apps.<system>.render` | `nix run .#render -- <path-to-module.nix>` evaluates that module file with `nixosModules.default` (`pkgs` and `catenix` in `specialArgs`) and prints its `config.build.yaml` (`apps/render.nix`, `apps/renderModule.nix`). |
 | `devShells.<system>.default` | `nix-unit`, `yq-go`, `nixfmt`, `jq`. |
 | `formatter.<system>` | `nixfmt`. |
 
@@ -208,6 +262,20 @@ module owns `default`, `description`, and the freeform type.
 `options.build.manifests` (read-only list) and `options.build.yaml`
 (read-only package) — thin wiring over `lib/render.nix`
 (`manifestsFromResources config.resources`, `toYaml pkgs ...`).
+
+### `apps/render.nix`, `apps/renderModule.nix`
+
+`renderModule.nix` is the evaluation, a file for
+`nix build --impure --file apps/renderModule.nix --argstr module <absolute path> [--argstr system <system>]`:
+it loads this flake with `builtins.getFlake` on its own source directory and
+returns `config.build.yaml` of the module composed with `nixosModules.default`,
+with `pkgs` (`nixpkgs.legacyPackages.<system>`) and `catenix` (the flake's
+`lib`) in `specialArgs`. `--impure` because the module lives outside the store.
+`render.nix` is the app: a `writeShellApplication` that makes its one argument
+absolute with `realpath` (so paths are relative to the caller's working
+directory), runs that `nix build` with the caller's `nix` from `PATH`, and
+prints the built file. Not covered by checks, since it runs `nix` itself; try
+it on `examples/`.
 
 ## TDD workflow
 
