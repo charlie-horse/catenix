@@ -83,7 +83,7 @@ let
     definitions = { };
   };
 
-  # A kind that lists the injected fields as required.
+  # A kind that lists the injected and server-set fields as required.
   strict = {
     group = "example.com";
     version = "v1";
@@ -95,6 +95,7 @@ let
         "apiVersion"
         "kind"
         "spec"
+        "status"
       ];
       properties = {
         apiVersion.type = "string";
@@ -104,17 +105,137 @@ let
           required = [
             "name"
             "namespace"
+            "uid"
+            "resourceVersion"
           ];
           properties = {
             name.type = "string";
             namespace.type = "string";
             uid.type = "string";
+            resourceVersion.type = "string";
+            labels = {
+              type = "object";
+              additionalProperties.type = "string";
+            };
           };
         };
         spec.type = "string";
+        status.type = "string";
       };
     };
     definitions = { };
+  };
+
+  # Fields the API server sets, ignores or rejects on create/apply.
+  serverSetMetadata = [
+    "uid"
+    "resourceVersion"
+    "generation"
+    "creationTimestamp"
+    "deletionTimestamp"
+    "deletionGracePeriodSeconds"
+    "managedFields"
+    "selfLink"
+  ];
+
+  # A value of the right type for each server-set metadata field, so only
+  # the forbidding can reject it.
+  serverSetValues = {
+    uid = "1234";
+    resourceVersion = "42";
+    generation = 1;
+    creationTimestamp = "2026-01-01T00:00:00Z";
+    deletionTimestamp = "2026-01-01T00:00:00Z";
+    deletionGracePeriodSeconds = 30;
+    managedFields = [ { manager = "kubectl"; } ];
+    selfLink = "/api/v1/namespaces/default/things/x";
+  };
+
+  # A namespaced kind with fully typed metadata (as ObjectMeta in the real
+  # spec) and a typed `status`, reached through `$ref`s.
+  typedDefinitions = {
+    "io.example.FullObjectMeta" = {
+      type = "object";
+      properties = {
+        name.type = "string";
+        namespace.type = "string";
+        labels = {
+          type = "object";
+          additionalProperties.type = "string";
+        };
+        annotations = {
+          type = "object";
+          additionalProperties.type = "string";
+        };
+        finalizers = {
+          type = "array";
+          items.type = "string";
+        };
+        ownerReferences = {
+          type = "array";
+          items = {
+            type = "object";
+            properties = {
+              apiVersion.type = "string";
+              kind.type = "string";
+              name.type = "string";
+              uid.type = "string";
+            };
+          };
+        };
+        uid.type = "string";
+        resourceVersion.type = "string";
+        generation = {
+          type = "integer";
+          format = "int64";
+        };
+        creationTimestamp = {
+          type = "string";
+          format = "date-time";
+        };
+        deletionTimestamp = {
+          type = "string";
+          format = "date-time";
+        };
+        deletionGracePeriodSeconds = {
+          type = "integer";
+          format = "int64";
+        };
+        managedFields = {
+          type = "array";
+          items = {
+            type = "object";
+            properties.manager.type = "string";
+          };
+        };
+        selfLink.type = "string";
+      };
+    };
+    "io.example.ThingStatus" = {
+      type = "object";
+      properties.ready.type = "boolean";
+    };
+  };
+  thing = {
+    group = "example.com";
+    version = "v1";
+    kind = "Thing";
+    namespaced = true;
+    schema = {
+      type = "object";
+      required = [ "status" ];
+      properties = {
+        apiVersion.type = "string";
+        kind.type = "string";
+        metadata = {
+          allOf = [ { "$ref" = "#/components/schemas/io.example.FullObjectMeta"; } ];
+          default = { };
+        };
+        spec.type = "string";
+        status."$ref" = "#/components/schemas/io.example.ThingStatus";
+      };
+    };
+    definitions = typedDefinitions;
   };
 
   # A kind whose nested schemas must not be forced unless it is used. (The
@@ -297,23 +418,23 @@ in
     expected."example.io".v1.Gizmo.ok.metadata.labels.tier = "db";
   };
 
-  testInjectedFieldsDroppedFromRequired = {
+  testInjectedAndServerSetFieldsDroppedFromRequired = {
     expr = plain (
       resourcesOf [ strict ] {
         resources."example.com".v1.Strict.ok = {
-          metadata.uid = "1234";
+          metadata.labels.a = "b";
           spec = "x";
         };
       }
     );
     expected."example.com".v1.Strict.ok = {
-      metadata.uid = "1234";
+      metadata.labels.a = "b";
       spec = "x";
     };
   };
 
   testOtherRequiredFieldsStayRequired = {
-    expr = rejects [ strict ] { resources."example.com".v1.Strict.bad.metadata.uid = "1234"; };
+    expr = rejects [ strict ] { resources."example.com".v1.Strict.bad.metadata.labels.a = "b"; };
     expected = true;
   };
 
@@ -396,6 +517,164 @@ in
       metadata.namespace = "default";
       spec = "x";
     };
+  };
+
+  # mkResourceModule: server-set fields
+
+  testTypedMetadataRejectsServerSetFields = {
+    expr = lib.genAttrs serverSetMetadata (
+      field:
+      rejects [ thing ] {
+        resources."example.com".v1.Thing.bad.metadata.${field} = serverSetValues.${field};
+      }
+    );
+    expected = lib.genAttrs serverSetMetadata (_: true);
+  };
+
+  testUntypedMetadataRejectsServerSetFields = {
+    expr = lib.genAttrs serverSetMetadata (
+      field:
+      rejects [ widget ] {
+        resources."example.com".v1.Widget.bad = {
+          metadata.${field} = serverSetValues.${field};
+          spec.size = 1;
+        };
+      }
+    );
+    expected = lib.genAttrs serverSetMetadata (_: true);
+  };
+
+  testPreserveUnknownKindRejectsServerSetFields = {
+    expr = map (rejects [ blob ]) (
+      [ { resources."example.com".v1.Blob.bad.status.ready = true; } ]
+      ++ map (field: {
+        resources."example.com".v1.Blob.bad.metadata.${field} = serverSetValues.${field};
+      }) serverSetMetadata
+    );
+    expected = map (_: true) ([ "status" ] ++ serverSetMetadata);
+  };
+
+  testKindWithoutMetadataPropertyRejectsServerSetFields = {
+    expr = lib.genAttrs serverSetMetadata (
+      field:
+      rejects [ bare ] {
+        resources."example.com".v1.Bare.bad.metadata.${field} = serverSetValues.${field};
+      }
+    );
+    expected = lib.genAttrs serverSetMetadata (_: true);
+  };
+
+  testTypedStatusRejected = {
+    expr = rejects [ thing ] { resources."example.com".v1.Thing.bad.status.ready = true; };
+    expected = true;
+  };
+
+  testUntypedKindStatusRejected = {
+    expr = rejects [ widget ] {
+      resources."example.com".v1.Widget.bad = {
+        status = { };
+        spec.size = 1;
+      };
+    };
+    expected = true;
+  };
+
+  testServerSetFieldsDroppedFromRequired = {
+    expr = plain (resourcesOf [ thing ] { resources."example.com".v1.Thing.ok.spec = "x"; });
+    expected."example.com".v1.Thing.ok.spec = "x";
+  };
+
+  testTypedMetadataAcceptsOrdinaryFields = {
+    expr = plain (
+      resourcesOf [ thing ] {
+        resources."example.com".v1.Thing.ok.metadata = {
+          namespace = "default";
+          labels.app = "demo";
+          annotations."example.com/note" = "hi";
+          finalizers = [ "example.com/cleanup" ];
+          ownerReferences = [
+            {
+              apiVersion = "v1";
+              kind = "ConfigMap";
+              name = "owner";
+              uid = "5678";
+            }
+          ];
+        };
+      }
+    );
+    expected."example.com".v1.Thing.ok.metadata = {
+      namespace = "default";
+      labels.app = "demo";
+      annotations."example.com/note" = "hi";
+      finalizers = [ "example.com/cleanup" ];
+      ownerReferences = [
+        {
+          apiVersion = "v1";
+          kind = "ConfigMap";
+          name = "owner";
+          uid = "5678";
+        }
+      ];
+    };
+  };
+
+  testUntypedMetadataAcceptsOrdinaryFields = {
+    expr = plain (
+      resourcesOf [ widget ] {
+        resources."example.com".v1.Widget.ok = {
+          metadata = {
+            labels.app = "demo";
+            annotations."example.com/note" = "hi";
+            finalizers = [ "example.com/cleanup" ];
+            ownerReferences = [
+              {
+                apiVersion = "v1";
+                kind = "ConfigMap";
+                name = "owner";
+                uid = "5678";
+              }
+            ];
+          };
+          spec.size = 1;
+        };
+      }
+    );
+    expected."example.com".v1.Widget.ok = {
+      metadata = {
+        labels.app = "demo";
+        annotations."example.com/note" = "hi";
+        finalizers = [ "example.com/cleanup" ];
+        ownerReferences = [
+          {
+            apiVersion = "v1";
+            kind = "ConfigMap";
+            name = "owner";
+            uid = "5678";
+          }
+        ];
+      };
+      spec.size = 1;
+    };
+  };
+
+  testInstanceTypeTypedMetadataOptions = {
+    expr = subOptionNames ((instanceType thing).getSubOptions [ ]).metadata.type;
+    expected = [
+      "annotations"
+      "finalizers"
+      "labels"
+      "namespace"
+      "ownerReferences"
+    ];
+  };
+
+  testInstanceTypeTypedOptions = {
+    expr = subOptionNames (instanceType thing);
+    expected = [
+      "metadata"
+      "spec"
+    ];
   };
 
   # mkResourceModule: composition

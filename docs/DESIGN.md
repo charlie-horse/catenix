@@ -192,13 +192,18 @@ typeless `oneOf` keeps its own. Not checked: `pattern` (ECMA-262 regexes, while
 
 Takes a list of resource schema records, returns a module declaring
 `options.resources = mkOption { type = submodule { options.<group|core>.<version>.<Kind> = mkOption { type = attrsOf (submodule ...); default = { }; }; }; }`.
-Each instance type is the kind's normalized schema with `apiVersion`, `kind`,
-and `metadata.name` removed (and `metadata.namespace` too for cluster-scoped
-kinds) — `render` injects those — and from the matching `required` lists.
-Where an object accepts unknown fields (a bare `type: object` CRD `metadata`,
+Each instance type is the kind's normalized schema with the fields users
+can't set removed, from `properties` and from the matching `required` lists:
+`apiVersion`, `kind`, and `metadata.name` (and `metadata.namespace` too for
+cluster-scoped kinds), which `render` injects; and the server-set fields
+`status` and `metadata.{uid, resourceVersion, generation, creationTimestamp,
+deletionTimestamp, deletionGracePeriodSeconds, managedFields, selfLink}`,
+which the API server ignores, overwrites or rejects on create/apply. Where an
+object accepts unknown fields (a bare `type: object` CRD `metadata`,
 `x-kubernetes-preserve-unknown-fields`, no properties), removal alone would
 let users set them, so there each is declared as an optional empty `enum`,
-which rejects any value. Every kind gets a `metadata` property, freeform if its
+which rejects any value. Ordinary metadata (`labels`, `annotations`,
+`finalizers`, `ownerReferences`, ...) is untouched. Every kind gets a `metadata` property, freeform if its
 schema doesn't declare one. The kind's `description` goes on the `<Kind>`
 option. `resourceModule.instanceType resource` is exposed for testing.
 
@@ -344,9 +349,6 @@ gaps below — catenix checks types, not every rule the API server enforces:
 - **All versions in the spec are typed**, including alpha/beta group-versions
   the server doesn't serve by default, and fields behind disabled feature gates
   (silently dropped by the server).
-- **Server-set fields aren't blocked**: `status`, `metadata.uid`,
-  `resourceVersion`, `managedFields`, `creationTimestamp` are accepted and then
-  ignored or rejected by the server.
 - **Unknown kinds type-check unless `validation.strict = true`**, so a kind
   typo (`Deploymnet`) only fails at apply time in the default mode.
 - **Custom resources and their CRD in one `kubectl apply`** need two passes:
