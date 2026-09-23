@@ -227,8 +227,11 @@ import-from-derivation build can't be caught by `builtins.tryEval`.
   kept, `_module` keys included: `evalModules` already leaves `_module` out of
   submodule configs, so one in `body` is user data (e.g. a ConfigMap key).
 - `manifestsFromResources resources` — flattens
-  `resources.<group>.<version>.<Kind>.<name>` into a list of manifests (sorted
-  by group, version, kind, name).
+  `resources.<group>.<version>.<Kind>.<name>` into a list of manifests in apply
+  order: core `Namespace`s first, then `apiextensions.k8s.io`
+  `CustomResourceDefinition`s, then everything else, each part sorted by group,
+  version, kind, name. `kubectl apply -f` creates objects in file order, so a
+  fresh apply finds namespaces and CRDs before the objects that need them.
 - `toYaml pkgs manifests` — derivation of a multi-document YAML file (`---`
   separated). Each manifest goes through `pkgs.formats.yaml { }` (YAML 1.1,
   so strings like `on`/`yes` get quoted, which Kubernetes' YAML 1.1 parser

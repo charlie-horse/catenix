@@ -14,8 +14,9 @@ let
     else
       value;
 
-  apiVersion =
-    { group, version, ... }: if group == "" || group == "core" then version else "${group}/${version}";
+  isCoreGroup = group: group == "" || group == "core";
+
+  apiVersion = { group, version, ... }: if isCoreGroup group then version else "${group}/${version}";
 
   toManifest =
     {
@@ -39,23 +40,49 @@ let
     let
       # `f name value` for every attribute, concatenated in attribute order.
       forEach = attrs: f: lib.concatLists (lib.mapAttrsToList f attrs);
-    in
-    forEach (stripNulls resources) (
-      group: versions:
-      forEach versions (
-        version: kinds:
-        forEach kinds (
-          kind: instances:
-          lib.mapAttrsToList (
-            name: body:
-            toManifest {
-              apiVersion = apiVersion { inherit group version; };
-              inherit kind name body;
-            }
-          ) instances
+
+      # Every instance, sorted by group, version, kind and name.
+      instances = forEach (stripNulls resources) (
+        group: versions:
+        forEach versions (
+          version: kinds:
+          forEach kinds (
+            kind:
+            lib.mapAttrsToList (
+              name: body: {
+                inherit
+                  group
+                  version
+                  kind
+                  name
+                  body
+                  ;
+              }
+            )
+          )
         )
-      )
-    );
+      );
+
+      # `kubectl apply -f` creates objects in file order, so what others need
+      # goes first: namespaces (for namespaced objects), then CRDs (for custom
+      # resources).
+      rank =
+        { group, kind, ... }:
+        if isCoreGroup group && kind == "Namespace" then
+          0
+        else if group == "apiextensions.k8s.io" && kind == "CustomResourceDefinition" then
+          1
+        else
+          2;
+    in
+    # `sortOn` is stable: within a rank, instances keep their order.
+    map (
+      instance:
+      toManifest {
+        apiVersion = apiVersion instance;
+        inherit (instance) kind name body;
+      }
+    ) (lib.sortOn rank instances);
 
   toYaml =
     pkgs: manifests:
