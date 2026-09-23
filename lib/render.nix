@@ -2,25 +2,21 @@
 # Everything is pure Nix except `toYaml`, which builds the file.
 { lib }:
 let
-  # Recursively keeps the attributes for which `pred name value` holds,
-  # descending into attrsets and lists.
-  filterAttrsDeep =
-    pred: value:
+  # Recursively drops `null` attribute values, descending into attrsets and
+  # lists. Submodule configs carry no `_module` (`evalModules` removes it), so
+  # every other attribute, `_module` included, is the user's data.
+  stripNulls =
+    value:
     if lib.isAttrs value then
-      lib.mapAttrs (_: filterAttrsDeep pred) (lib.filterAttrs pred value)
+      lib.mapAttrs (_: stripNulls) (lib.filterAttrs (_: v: v != null) value)
     else if lib.isList value then
-      map (filterAttrsDeep pred) value
+      map stripNulls value
     else
       value;
 
-  stripNulls = filterAttrsDeep (_: value: value != null);
+  isCoreGroup = group: group == "" || group == "core";
 
-  # Also drops the `_module` attrs of submodule configs; the name is checked
-  # first so `_module` itself is never forced.
-  toPlain = filterAttrsDeep (name: value: name != "_module" && value != null);
-
-  apiVersion =
-    { group, version, ... }: if group == "" || group == "core" then version else "${group}/${version}";
+  apiVersion = { group, version, ... }: if isCoreGroup group then version else "${group}/${version}";
 
   toManifest =
     {
@@ -29,7 +25,7 @@ let
       name,
       body,
     }:
-    toPlain (
+    stripNulls (
       body
       // {
         inherit apiVersion kind;
@@ -44,42 +40,88 @@ let
     let
       # `f name value` for every attribute, concatenated in attribute order.
       forEach = attrs: f: lib.concatLists (lib.mapAttrsToList f attrs);
-    in
-    forEach (toPlain resources) (
-      group: versions:
-      forEach versions (
-        version: kinds:
-        forEach kinds (
-          kind: instances:
-          lib.mapAttrsToList (
-            name: body:
-            toManifest {
-              apiVersion = apiVersion { inherit group version; };
-              inherit kind name body;
-            }
-          ) instances
-        )
-      )
-    );
 
+      # Every instance, sorted by group, version, kind and name.
+      instances = forEach (stripNulls resources) (
+        group: versions:
+        forEach versions (
+          version: kinds:
+          forEach kinds (
+            kind:
+            lib.mapAttrsToList (
+              name: body: {
+                inherit
+                  group
+                  version
+                  kind
+                  name
+                  body
+                  ;
+              }
+            )
+          )
+        )
+      );
+
+      # `kubectl apply -f` creates objects in file order, so what others need
+      # goes first: namespaces (for namespaced objects), then CRDs (for custom
+      # resources).
+      rank =
+        { group, kind, ... }:
+        if isCoreGroup group && kind == "Namespace" then
+          0
+        else if group == "apiextensions.k8s.io" && kind == "CustomResourceDefinition" then
+          1
+        else
+          2;
+    in
+    # `sortOn` is stable: within a rank, instances keep their order.
+    map (
+      instance:
+      toManifest {
+        apiVersion = apiVersion instance;
+        inherit (instance) kind name body;
+      }
+    ) (lib.sortOn rank instances);
+
+  # NEL, LS and PS: JSON allows them raw in strings, but YAML reads them as
+  # line breaks, so they're turned into JSON escapes before yq reads JSON as
+  # YAML. (The rest of JSON's structure is ASCII, so only strings change.)
+  escapeYamlLineBreaks =
+    let
+      escapes = [
+        "\\u0085"
+        "\\u2028"
+        "\\u2029"
+      ];
+    in
+    builtins.replaceStrings (map (e: builtins.fromJSON ''"${e}"'') escapes) escapes;
+
+  # Strings YAML 1.1 reads as something else but yq's encoder, going by YAML
+  # 1.2, would leave plain: booleans (`yes`, `on`, ...; in any case, as yq's
+  # `-P` matches them) and base 60 numbers (`12:30`; go-yaml's regex). These
+  # are the extra strings go-yaml's own encoder quotes.
+  yaml11Scalar = "^(?i:y|yes|n|no|on|off)$|^[-+]?[0-9][0-9_]*(?::[0-5]?[0-9])+(?:\\.[0-9_]*)?$";
+
+  # yq reads the JSON as YAML (`-p json` would turn numbers into floats and
+  # lose big ints) and writes it back as block YAML once every node's style
+  # is reset (JSON's are flow maps and double-quoted strings), except that
+  # `yaml11Scalar` strings keep their double quotes. yq's encoder quotes every
+  # other string that would read back as something else (`08`, `0o17`,
+  # `true`, `<<`, ...) and writes multi-line strings as literal blocks. `-c`
+  # puts sequence dashes at their key's indentation; `split_doc` makes each
+  # manifest its own `---`-separated document. Keys keep Nix's (sorted)
+  # attribute order.
   toYaml =
     pkgs: manifests:
-    let
-      # YAML 1.1 quotes strings like `on`/`yes` that Kubernetes' parser would
-      # otherwise read as booleans.
-      inherit (pkgs.formats.yaml { }) generate;
-      documents = lib.imap0 (i: generate "manifest-${toString i}.yaml") manifests;
-    in
-    # remarshal starts each file with a "%YAML 1.1" directive and a "---"
-    # marker; drop those and put one "---" line between documents.
-    pkgs.runCommand "manifests.yaml" { inherit documents; } ''
-      sep=
-      for doc in $documents; do
-        printf '%s' "$sep"
-        sed '1,2{/^%YAML /d; /^---$/d}' "$doc"
-        sep=$'---\n'
-      done > "$out"
-    '';
+    pkgs.runCommand "manifests.yaml"
+      {
+        nativeBuildInputs = [ pkgs.yq-go ];
+        json = escapeYamlLineBreaks (builtins.toJSON manifests);
+        passAsFile = [ "json" ];
+        inherit yaml11Scalar;
+      }
+      ''yq -p yaml -o yaml -c '(... | select(tag != "!!str" or (test(strenv(yaml11Scalar)) | not))) style = "" | .[] | split_doc' "$jsonPath" > "$out"'';
 in
 {
   inherit
