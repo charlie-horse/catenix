@@ -94,10 +94,12 @@ in
           {
             resources.core.v1.Service.svc.spec.ports = [
               {
+                name = "http";
                 port = 80;
                 targetPort = "http";
               }
               {
+                name = "admin";
                 port = 81;
                 targetPort = 8081;
               }
