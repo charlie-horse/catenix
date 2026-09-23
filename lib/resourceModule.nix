@@ -4,8 +4,8 @@
 # `resources.<group>.<version>.<Kind>.<name>` (core group spelled `core`) as a
 # submodule, so the declarations of several such modules (core types, each
 # imported CRD) and of modules/resources.nix merge. Each instance is typed by
-# its kind's normalized schema minus the fields `render` injects: `apiVersion`,
-# `kind`, `metadata.name`, and `metadata.namespace` for cluster-scoped kinds.
+# its kind's normalized schema minus `apiVersion`, `kind` and `metadata.name`,
+# which `render` injects, and `metadata.namespace` for cluster-scoped kinds.
 # Types are built lazily: until a kind is used, only the top level of its
 # schema is looked at (the module system asks whether instances are
 # submodules).
@@ -21,7 +21,7 @@ let
   # can only be left unset.
   forbidden = {
     enum = [ ];
-    description = "Set by catenix when rendering.";
+    description = "Not settable: derived from the resource's key, or not applicable to its scope.";
   };
 
   # The object `schema` without the properties `names`, which are also dropped
