@@ -1,6 +1,8 @@
 # Resource schema records for the built-in Kubernetes API, from parsed OpenAPI
 # v3 documents (`api/openapi-spec/v3/*.json`) and, optionally, aggregated
-# discovery (`api/discovery/aggregated_v2.json`) for resource scopes.
+# discovery (`api/discovery/aggregated_v2.json`) for resource scopes. `apis`
+# picks the group/versions: those a default API server serves (GA versions),
+# all of them, or an explicit list.
 { lib }:
 let
   inherit (lib)
@@ -21,14 +23,29 @@ let
     }:
     "${group}/${version}/${kind}";
 
-  showGvk =
-    {
-      group,
-      version,
-      kind,
-      ...
-    }:
-    "${if group == "" then version else "${group}/${version}"} ${kind}";
+  # "group/version", or just "version" for the core group.
+  showGroupVersion = { group, version, ... }: if group == "" then version else "${group}/${version}";
+
+  showGvk = gvk: "${showGroupVersion gvk} ${gvk.kind}";
+
+  # Whether a default kube-apiserver serves a version: GA versions (`v1`,
+  # `v2`) are enabled by default, alpha and beta versions (`v1beta1`,
+  # `v1alpha3`) are not. Kubernetes has disabled new beta APIs by default
+  # since 1.24, and the pinned v1.37 lists every remaining beta and alpha
+  # version as disabled by default (`pkg/controlplane/instance.go`).
+  servedByDefault = { version, ... }: builtins.match "v[0-9]+" version != null;
+
+  # The record predicate for an `apis` value.
+  apisFilter =
+    apis:
+    if apis == "default" then
+      servedByDefault
+    else if apis == "all" then
+      (_: true)
+    else if builtins.isList apis && apis != [ ] then
+      record: builtins.elem (showGroupVersion record) apis
+    else
+      throw ''catenix.kubernetes.loadKubernetes: apis must be "default", "all" or a non-empty list of group/versions (e.g. [ "coordination.k8s.io/v1beta1" ], core as "v1")'';
 
   # Resource collection paths: `/api/<v>/<plural>`, `/apis/<g>/<v>/<plural>`
   # and their `namespaces/{namespace}/<plural>` forms.
@@ -146,16 +163,25 @@ in
     {
       openapi,
       discovery ? null,
+      apis ? "default",
     }:
     let
       discoveryScope = if discovery == null then { } else discoveryScopes discovery;
-      records = concatMap (documentRecords discoveryScope) openapi;
+      allRecords = concatMap (documentRecords discoveryScope) openapi;
+      records = filter (apisFilter apis) allRecords;
+      unknownApis = lib.optionals (builtins.isList apis) (
+        lib.subtractLists (map showGroupVersion allRecords) apis
+      );
       duplicates = filter (group: builtins.length group > 1) (
         builtins.attrValues (builtins.groupBy gvkKey records)
       );
     in
-    if records == [ ] then
-      throw "catenix.kubernetes.loadKubernetes: no resources found in the OpenAPI documents"
+    if unknownApis != [ ] then
+      throw "catenix.kubernetes.loadKubernetes: apis lists group/versions with no resources in the OpenAPI documents: ${concatStringsSep ", " unknownApis}"
+    else if records == [ ] then
+      throw "catenix.kubernetes.loadKubernetes: no resources found in the OpenAPI documents${
+        lib.optionalString (apis == "default") " (apis = \"default\" keeps only GA versions)"
+      }"
     else if duplicates != [ ] then
       throw "catenix.kubernetes.loadKubernetes: duplicate resources: ${
         concatStringsSep ", " (map (group: showGvk (builtins.head group)) duplicates)

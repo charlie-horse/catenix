@@ -109,6 +109,37 @@ let
         };
       };
 
+  # One kind at every kind of version: GA (`v1`, `v2`), beta, alpha, plus a
+  # core GA and a core alpha kind.
+  versionsDoc =
+    doc
+      {
+        "/api/v1/knobs".get = op "" "v1" "Knob";
+        "/api/v1alpha1/dials".get = op "" "v1alpha1" "Dial";
+        "/apis/example.io/v1/widgets".get = op "example.io" "v1" "Widget";
+        "/apis/example.io/v2/widgets".get = op "example.io" "v2" "Widget";
+        "/apis/example.io/v2beta1/widgets".get = op "example.io" "v2beta1" "Widget";
+        "/apis/example.io/v3alpha2/widgets".get = op "example.io" "v3alpha2" "Widget";
+      }
+      {
+        "io.example.Knob" = kindSchema [ (gvk "" "v1" "Knob") ];
+        "io.example.Dial" = kindSchema [ (gvk "" "v1alpha1" "Dial") ];
+        "io.example.Widget" = kindSchema [
+          (gvk "example.io" "v1" "Widget")
+          (gvk "example.io" "v2" "Widget")
+          (gvk "example.io" "v2beta1" "Widget")
+          (gvk "example.io" "v3alpha2" "Widget")
+        ];
+      };
+
+  groupVersions =
+    records:
+    lib.sort lib.lessThan (
+      lib.unique (map (r: if r.group == "" then r.version else "${r.group}/${r.version}") records)
+    );
+
+  loadVersions = args: groupVersions (loadKubernetes ({ openapi = [ versionsDoc ]; } // args));
+
   # A kind whose schema has no `paths` of its own, scoped by discovery only.
   gizmoOnlyDoc = doc { } { inherit (openapi.components.schemas) "io.example.Gizmo"; };
 in
@@ -426,5 +457,81 @@ in
       fixtureGadget
       fixtureGizmo
     ];
+  };
+
+  # `apis`: which group/versions get records
+
+  testApisDefaultKeepsOnlyGaVersions = {
+    expr = loadVersions { apis = "default"; };
+    expected = [
+      "example.io/v1"
+      "example.io/v2"
+      "v1"
+    ];
+  };
+
+  testApisDefaultsToDefault = {
+    expr = loadVersions { };
+    expected = loadVersions { apis = "default"; };
+  };
+
+  testApisAllKeepsEveryVersion = {
+    expr = loadVersions { apis = "all"; };
+    expected = [
+      "example.io/v1"
+      "example.io/v2"
+      "example.io/v2beta1"
+      "example.io/v3alpha2"
+      "v1"
+      "v1alpha1"
+    ];
+  };
+
+  testApisListKeepsExactlyThose = {
+    expr = loadVersions {
+      apis = [
+        "example.io/v2beta1"
+        "v1alpha1"
+      ];
+    };
+    expected = [
+      "example.io/v2beta1"
+      "v1alpha1"
+    ];
+  };
+
+  testApisListWithUnknownGroupVersionThrows = {
+    expr = helpers.fails (loadVersions {
+      apis = [
+        "example.io/v1"
+        "example.io/v9beta9"
+      ];
+    });
+    expected = true;
+  };
+
+  testApisEmptyListThrows = {
+    expr = helpers.fails (loadVersions {
+      apis = [ ];
+    });
+    expected = true;
+  };
+
+  testApisUnknownValueThrows = {
+    expr = helpers.fails (loadVersions {
+      apis = "beta";
+    });
+    expected = true;
+  };
+
+  testApisDefaultWithOnlyPrereleaseVersionsThrows = {
+    expr = helpers.fails (loadKubernetes {
+      openapi = [
+        (doc { "/api/v1alpha1/dials".get = op "" "v1alpha1" "Dial"; } {
+          "io.example.Dial" = kindSchema [ (gvk "" "v1alpha1" "Dial") ];
+        })
+      ];
+    });
+    expected = true;
   };
 }
