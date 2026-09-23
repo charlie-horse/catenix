@@ -186,7 +186,11 @@ derivations — the source is already in the store.
 `options.resources` as a submodule whose `freeformType` is `null` when strict,
 else `attrsOf (attrsOf (attrsOf (attrsOf (attrsOf anything))))` — so unknown
 groups/kinds are accepted unless strict. Merges with the submodule
-declarations from `resourceModule`.
+declarations from `resourceModule`. For that merge to work, every other
+declaration of `options.resources` (each `resourceModule`) sets only `type`, as
+a plain `types.submodule` with no `freeformType`, whose group and version
+levels are nested option sets and whose first real option is the kind — this
+module owns `default`, `description`, and the freeform type.
 
 ### `modules/build.nix`
 
