@@ -343,3 +343,15 @@ gaps below — catenix checks types, not every rule the API server enforces:
   ignored or rejected by the server.
 - **Unknown kinds type-check unless `validation.strict = true`**, so a kind
   typo (`Deploymnet`) only fails at apply time in the default mode.
+- **Custom resources and their CRD in one `kubectl apply`** need two passes:
+  output puts CRDs before other objects, but kubectl resolves every object's
+  kind before creating any, so the custom resources fail the first time.
+  Namespaces-first does make everything else apply in one pass.
+- **YAML merge keys in CRD files** follow the YAML spec (keys written next to
+  `<<` win). kubectl instead lets a merge written *after* an explicit key
+  override it, so a CRD that does that is typed differently from what the
+  server stores. Merges written first agree.
+- **A `_module` key can't be set** inside a CRD object that has both
+  `properties` and `x-kubernetes-preserve-unknown-fields`: the module system
+  reserves that name in submodules. Elsewhere (e.g. `ConfigMap.data`) it's
+  fine.
