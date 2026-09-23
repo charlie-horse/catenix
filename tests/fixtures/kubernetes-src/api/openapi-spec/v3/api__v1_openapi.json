@@ -1,0 +1,56 @@
+{
+  "openapi": "3.0.0",
+  "info": { "title": "catenix test fixture: core group", "version": "v0.0.0" },
+  "paths": {
+    "/api/v1/namespaces/{namespace}/gadgets": {
+      "get": { "x-kubernetes-group-version-kind": { "group": "", "version": "v1", "kind": "GadgetList" } },
+      "post": { "x-kubernetes-group-version-kind": { "group": "", "version": "v1", "kind": "Gadget" } }
+    },
+    "/api/v1/gadgets": {
+      "get": { "x-kubernetes-group-version-kind": { "group": "", "version": "v1", "kind": "GadgetList" } }
+    }
+  },
+  "components": {
+    "schemas": {
+      "io.k8s.apimachinery.pkg.apis.meta.v1.ObjectMeta": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "namespace": { "type": "string" },
+          "labels": { "type": "object", "additionalProperties": { "type": "string" } }
+        }
+      },
+      "io.example.GadgetSpec": {
+        "type": "object",
+        "required": ["size"],
+        "properties": {
+          "size": { "type": "integer" }
+        }
+      },
+      "io.example.Gadget": {
+        "type": "object",
+        "description": "A namespaced core-group test kind.",
+        "properties": {
+          "apiVersion": { "type": "string" },
+          "kind": { "type": "string" },
+          "metadata": {
+            "allOf": [{ "$ref": "#/components/schemas/io.k8s.apimachinery.pkg.apis.meta.v1.ObjectMeta" }],
+            "default": {}
+          },
+          "spec": {
+            "allOf": [{ "$ref": "#/components/schemas/io.example.GadgetSpec" }],
+            "default": {}
+          }
+        },
+        "x-kubernetes-group-version-kind": [{ "group": "", "version": "v1", "kind": "Gadget" }]
+      },
+      "io.example.GadgetList": {
+        "type": "object",
+        "properties": {
+          "items": { "type": "array", "items": { "$ref": "#/components/schemas/io.example.Gadget" } }
+        },
+        "x-kubernetes-group-version-kind": [{ "group": "", "version": "v1", "kind": "GadgetList" }]
+      }
+    }
+  }
+}

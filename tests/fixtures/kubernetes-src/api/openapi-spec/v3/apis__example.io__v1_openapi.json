@@ -1,0 +1,31 @@
+{
+  "openapi": "3.0.0",
+  "info": { "title": "catenix test fixture: example.io/v1, scoped by discovery only", "version": "v0.0.0" },
+  "paths": {},
+  "components": {
+    "schemas": {
+      "io.k8s.apimachinery.pkg.apis.meta.v1.ObjectMeta": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "namespace": { "type": "string" },
+          "labels": { "type": "object", "additionalProperties": { "type": "string" } }
+        }
+      },
+      "io.example.Gizmo": {
+        "type": "object",
+        "description": "A cluster-scoped named-group test kind.",
+        "properties": {
+          "apiVersion": { "type": "string" },
+          "kind": { "type": "string" },
+          "metadata": {
+            "allOf": [{ "$ref": "#/components/schemas/io.k8s.apimachinery.pkg.apis.meta.v1.ObjectMeta" }],
+            "default": {}
+          },
+          "weight": { "type": "number" }
+        },
+        "x-kubernetes-group-version-kind": [{ "group": "example.io", "version": "v1", "kind": "Gizmo" }]
+      }
+    }
+  }
+}
