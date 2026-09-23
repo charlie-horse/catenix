@@ -109,6 +109,30 @@ in
     expected = false;
   };
 
+  # The API server sets `status` and `metadata.uid` itself.
+  testServerSetFieldsFail = {
+    expr =
+      map
+        (
+          config:
+          helpers.fails
+            (eval [
+              { resources.apps.v1.Deployment.web.metadata.namespace = "default"; }
+              { resources.apps.v1.Deployment.web = config; }
+            ]).config.build.manifests
+        )
+        [
+          { }
+          { status.replicas = 2; }
+          { metadata.uid = "8f0e3c1a-0000-0000-0000-000000000000"; }
+        ];
+    expected = [
+      false
+      true
+      true
+    ];
+  };
+
   # `DeploymentSpec.replicas` is `format: int32`: the API server would store
   # 4294967298 as 2.
   testInt32OverflowFails = {

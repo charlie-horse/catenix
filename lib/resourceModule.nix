@@ -5,7 +5,8 @@
 # submodule, so the declarations of several such modules (core types, each
 # imported CRD) and of modules/resources.nix merge. Each instance is typed by
 # its kind's normalized schema minus `apiVersion`, `kind` and `metadata.name`,
-# which `render` injects, and `metadata.namespace` for cluster-scoped kinds.
+# which `render` injects, `metadata.namespace` for cluster-scoped kinds, and
+# the fields the API server sets itself (`status`, `metadata.uid`, ...).
 # Types are built lazily: until a kind is used, only the top level of its
 # schema is looked at (the module system asks whether instances are
 # submodules).
@@ -21,7 +22,7 @@ let
   # can only be left unset.
   forbidden = {
     enum = [ ];
-    description = "Not settable: derived from the resource's key, or not applicable to its scope.";
+    description = "Not settable: derived from the resource's key, not applicable to its scope, or set by the API server.";
   };
 
   # The object `schema` without the properties `names`, which are also dropped
@@ -43,18 +44,40 @@ let
     }
     // lib.optionalAttrs open { x-kubernetes-preserve-unknown-fields = true; };
 
+  # Top-level and `metadata` fields users can't set: injected by `render` from
+  # the resource's key, or set by the API server, which ignores, overwrites or
+  # rejects them on create/apply.
+  unsettableFields = [
+    "apiVersion"
+    "kind"
+    "status"
+  ];
+  unsettableMetadataFields = [
+    "name"
+    "uid"
+    "resourceVersion"
+    "generation"
+    "creationTimestamp"
+    "deletionTimestamp"
+    "deletionGracePeriodSeconds"
+    "managedFields"
+    "selfLink"
+  ];
+
   # A kind's normalized schema as an instance schema. Every kind has
   # `metadata`; CRDs usually declare it as a bare `type: object`.
   instanceSchema =
     namespaced: schema:
     let
-      top = withoutFields [ "apiVersion" "kind" ] schema;
+      top = withoutFields unsettableFields schema;
       metadata = schema.properties.metadata or { type = "object"; };
     in
     top
     // {
       properties = top.properties // {
-        metadata = withoutFields ([ "name" ] ++ lib.optional (!namespaced) "namespace") metadata;
+        metadata = withoutFields (
+          unsettableMetadataFields ++ lib.optional (!namespaced) "namespace"
+        ) metadata;
       };
     };
 
