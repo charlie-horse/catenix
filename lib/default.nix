@@ -23,6 +23,7 @@ let
     manifestsToResources = import ./manifestsToResources.nix { inherit lib catenix; };
     helmTemplate = import ./helmTemplate.nix { inherit lib; };
     importChart = import ./importChart.nix { inherit lib catenix; };
+    fetchChart = import ./fetchChart.nix { inherit lib; };
   };
 in
 catenix

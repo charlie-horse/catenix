@@ -460,6 +460,32 @@ becoming a catchable `throw`: the output is meant to be built directly too,
 and a "successful" build holding an error message would be a trap. Tests
 check failures with `pkgs.testers.testBuildFailure`.
 
+### `lib/fetchChart.nix` → `fetchChart pkgs { repo, name, version, hash }`
+
+A fixed-output derivation (`helm-chart-<name>-<version>`, recursive NAR
+hash) running `helm pull --untar`; the output is the unpacked chart
+directory, subcharts included as published. `repo` is a classic repository
+URL (`https://...`, pulled with `--repo`) or an OCI registry
+(`oci://...`, pulling `<repo>/<name>`); anything else throws. Build once with
+`lib.fakeHash` and copy the reported hash. Like nixpkgs' fetchers it takes
+the proxy variables and `NIX_SSL_CERT_FILE` (`impureEnvVars`), falling back
+to `cacert` for TLS. Only the derivation is unit-tested (fetching needs the
+network); by hand, cert-manager v1.21.2 from `https://charts.jetstack.io`
+and from `oci://quay.io/jetstack/charts` both gave
+`sha256-AsbUc4Q9aVfTmENGPPmjOwC6V6v3MpTN1cKIl8csi10=` — the same NAR hash
+as the unpacked `.tgz`, so a chart can move between `fetchChart` and a flake
+input without changing its hash.
+
+A classic repository's archive can instead be a flake input, which Nix
+fetches, unpacks and locks itself:
+
+```nix
+inputs.cert-manager-chart = {
+  url = "tarball+https://charts.jetstack.io/charts/cert-manager-v1.21.2.tgz";
+  flake = false;
+};
+```
+
 ### `lib/manifestsToResources.nix` → `manifestsToResources { manifests, namespace ? null, noHooks ? false, skipTests ? false }`
 
 Pure. Turns a list of plain manifests (what `helm template` renders) into a

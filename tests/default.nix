@@ -38,6 +38,7 @@ in
     manifestsToResources = import ./unit/manifestsToResources.nix args;
     helmTemplate = import ./unit/helmTemplate.nix args;
     importChart = import ./unit/importChart.nix args;
+    fetchChart = import ./unit/fetchChart.nix args;
   };
   integration = {
     basicResource = import ./integration/basic-resource.nix args;
