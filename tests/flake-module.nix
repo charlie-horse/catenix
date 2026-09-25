@@ -29,6 +29,7 @@
         "toYaml"
         "importCrdModule"
         "helmTemplate"
+        "importChart"
       ];
 
       evalTimeTests = {
@@ -67,8 +68,10 @@
         unit-toYaml = evalTime "unit-toYaml" evalTimeTests.unit.toYaml;
         unit-importCrdModule = evalTime "unit-importCrdModule" evalTimeTests.unit.importCrdModule;
         unit-helmTemplate = evalTime "unit-helmTemplate" evalTimeTests.unit.helmTemplate;
+        unit-importChart = evalTime "unit-importChart" evalTimeTests.unit.importChart;
         integration-basic-resource = evalTime "integration-basic-resource" evalTimeTests.integration.basicResource;
         integration-crd-import = evalTime "integration-crd-import" evalTimeTests.integration.crdImport;
+        integration-helm-chart = evalTime "integration-helm-chart" evalTimeTests.integration.helmChart;
         e2e-real-spec = evalTime "e2e-real-spec" evalTimeTests.e2e.realSpec;
         e2e-real-crd = evalTime "e2e-real-crd" evalTimeTests.e2e.realCrd;
       };

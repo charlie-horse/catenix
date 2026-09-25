@@ -506,6 +506,28 @@ resource key holds one object. The module reads `config.kinds` only inside
 values (a plain `if`, not `mkIf`: even a disabled definition of an option a
 typed cluster-scoped `metadata` doesn't declare is an error).
 
+### `lib/importChart.nix` → `importChart { pkgs, chart, release, values ? { }, kubeVersion ? null, apiVersions ? [ ], includeCrds ? true, extraArgs ? [ ], patch ? (m: m), noHooks ? false, skipTests ? false }`
+
+A Helm chart as a module. `helmTemplate` (the first eight arguments) renders
+it; the JSON array is read back with `builtins.fromJSON (builtins.readFile
+...)` — import-from-derivation, like `yaml2json`. `patch` maps each manifest
+(return `null` to drop one), before anything else, so a patched CRD types
+what it defines. The chart's `apiextensions.k8s.io/v1`
+CustomResourceDefinitions (from `crds/` with `includeCrds`, or templated) are
+imported with `crd.loadCrds` + `resourceModule.mkResourceModule`, so the
+chart's custom resources are typed (and declared, so strict mode accepts
+them); they are also emitted as resources themselves. Every manifest then
+goes through `manifestsToResources` with `namespace = release.namespace or
+"default"` and `noHooks`/`skipTests`. The module's `_file` is `helm release
+<name> (chart <chart>)`, so a type error names the release. It sets `imports`
+only, so it is itself imported (`pkgs` must then come from `specialArgs`,
+as with `importCrdModule`).
+
+A kind declared twice fails with the module system's "already declared"
+error: don't also `importCrdModule` the chart's CRDs (or import two releases
+of a chart shipping CRDs; drop them from the second with `includeCrds =
+false` or `patch`).
+
 ### `modules/resources.nix`
 
 `options.validation.strict` (`mkEnableOption`, default `false`) and

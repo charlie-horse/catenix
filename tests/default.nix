@@ -37,10 +37,12 @@ in
     modules = import ./unit/modules.nix args;
     manifestsToResources = import ./unit/manifestsToResources.nix args;
     helmTemplate = import ./unit/helmTemplate.nix args;
+    importChart = import ./unit/importChart.nix args;
   };
   integration = {
     basicResource = import ./integration/basic-resource.nix args;
     crdImport = import ./integration/crd-import.nix args;
+    helmChart = import ./integration/helm-chart.nix args;
   };
   e2e = {
     realSpec = import ./e2e/real-kubernetes-spec.nix args;
