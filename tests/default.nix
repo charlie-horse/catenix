@@ -4,6 +4,7 @@
   catenix,
   pkgs,
   kubernetesSrc,
+  certManagerChart,
   catenixModule,
 }:
 let
@@ -13,6 +14,7 @@ let
       catenix
       pkgs
       kubernetesSrc
+      certManagerChart
       catenixModule
       ;
     fixtures = ./fixtures;
@@ -48,5 +50,6 @@ in
   e2e = {
     realSpec = import ./e2e/real-kubernetes-spec.nix args;
     realCrd = import ./e2e/real-crd.nix args;
+    helmCertManager = import ./e2e/helm-cert-manager.nix args;
   };
 }

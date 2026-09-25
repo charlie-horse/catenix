@@ -1,5 +1,18 @@
 {
   "nodes": {
+    "cert-manager-chart": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1789055334,
+        "narHash": "sha256-AsbUc4Q9aVfTmENGPPmjOwC6V6v3MpTN1cKIl8csi10=",
+        "type": "tarball",
+        "url": "https://charts.jetstack.io/charts/cert-manager-v1.21.2.tgz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://charts.jetstack.io/charts/cert-manager-v1.21.2.tgz"
+      }
+    },
     "flake-parts": {
       "inputs": {
         "nixpkgs-lib": [
@@ -78,6 +91,7 @@
     },
     "root": {
       "inputs": {
+        "cert-manager-chart": "cert-manager-chart",
         "flake-parts": "flake-parts",
         "kubernetes-src": "kubernetes-src",
         "nix-unit": "nix-unit",

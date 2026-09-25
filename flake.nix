@@ -19,6 +19,11 @@
       url = "git+https://github.com/kubernetes/kubernetes?ref=refs/tags/v1.37.0&shallow=1";
       flake = false;
     };
+    # A real published chart for the end-to-end test (tests/e2e/helm-cert-manager.nix).
+    cert-manager-chart = {
+      url = "tarball+https://charts.jetstack.io/charts/cert-manager-v1.21.2.tgz";
+      flake = false;
+    };
   };
 
   outputs =

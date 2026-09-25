@@ -21,6 +21,7 @@
         inherit lib pkgs;
         catenix = self.lib;
         kubernetesSrc = inputs.kubernetes-src;
+        certManagerChart = inputs.cert-manager-chart;
         catenixModule = self.nixosModules.default;
       };
 
@@ -56,6 +57,7 @@
             flake-parts
             nix-unit
             kubernetes-src
+            cert-manager-chart
             ;
         };
         tests.unit = removeAttrs suites.unit evalTimeSuites;
@@ -74,6 +76,7 @@
         integration-helm-chart = evalTime "integration-helm-chart" evalTimeTests.integration.helmChart;
         e2e-real-spec = evalTime "e2e-real-spec" evalTimeTests.e2e.realSpec;
         e2e-real-crd = evalTime "e2e-real-crd" evalTimeTests.e2e.realCrd;
+        e2e-helm-cert-manager = evalTime "e2e-helm-cert-manager" evalTimeTests.e2e.helmCertManager;
       };
     };
 }
