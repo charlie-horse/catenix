@@ -415,6 +415,52 @@ imports = [
 
 `yaml2json` → `crd.loadCrds` → `resourceModule.mkResourceModule`.
 
+### `lib/manifestsToResources.nix` → `manifestsToResources { manifests, namespace ? null, noHooks ? false, skipTests ? false }`
+
+Pure. Turns a list of plain manifests (what `helm template` renders) into a
+module defining `resources`, so they are type-checked like any other resource
+when `build.manifests` is evaluated:
+
+- `v1` `List` documents are flattened into their items; `null`s are dropped
+  first (Kubernetes reads them as absent).
+- Each manifest becomes `resources.<group|core>.<version>.<Kind>.<name>`.
+  Stripped: `apiVersion`, `kind`, `metadata.name` (the key; `render` injects
+  them back) and the server-set fields catenix rejects, `status` and
+  `metadata.{uid, resourceVersion, generation, creationTimestamp,
+  deletionTimestamp, deletionGracePeriodSeconds, managedFields, selfLink}`.
+  (The charts surveyed — ingress-nginx, cert-manager, bitnami redis/postgresql,
+  kube-prometheus-stack, grafana — emit none of them at the top level; their
+  `status: {}` lines are CRD `subresources`, which are kept. Templates copied
+  from `kubectl create -o yaml` do emit `creationTimestamp: null`.)
+- Every leaf — scalar, list or empty attrset — is defined with
+  `lib.mkDefault`, and non-empty attrsets are recursed into. So a user's plain
+  definition of a field wins over the chart's and attrsets (labels,
+  `spec`, ...) merge; a list is replaced whole; a user's `null` removes a
+  field (`render` drops nulls); `mkForce` isn't needed.
+- `metadata.namespace`: the manifest's own, else `namespace`, for kinds that
+  are namespaced or undeclared; never for cluster-scoped kinds, even when the
+  manifest sets one (kubectl ignores it there; catenix's types reject it).
+  This is what `kubectl apply -n <namespace>` and Helm do, both going by the
+  server's scope for the kind; here the scope comes from the evaluated
+  configuration, `config.kinds.<group>.<version>.<Kind>.namespaced` (set by
+  `resourceModule`, see above), so core kinds, imported CRDs and the chart's
+  own CRDs are all known. An undeclared kind (accepted, untyped, only without
+  `validation.strict`) is assumed namespaced: most custom kinds are, and a
+  cluster-scoped object's namespace is ignored by kubectl. Leaving it to the
+  user was rejected: charts rely on `helm install -n` for the namespace of
+  most objects, so every chart would need per-object overrides.
+- Helm hooks (`helm.sh/hook` annotation) are kept as ordinary objects, the
+  annotation included, unless `noHooks` (drops every hook) or `skipTests`
+  (drops hooks with a `test` or legacy `test-success` event), mirroring
+  `helm template --no-hooks`/`--skip-tests`.
+
+Throws on a manifest without `apiVersion`, `kind` or `metadata.name`
+(`generateName` isn't supported: the name is the key), and on two manifests
+with the same group/version/kind/name — even in different namespaces, since a
+resource key holds one object. The module reads `config.kinds` only inside
+values (a plain `if`, not `mkIf`: even a disabled definition of an option a
+typed cluster-scoped `metadata` doesn't declare is an error).
+
 ### `modules/resources.nix`
 
 `options.validation.strict` (`mkEnableOption`, default `false`) and

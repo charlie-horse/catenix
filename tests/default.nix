@@ -35,6 +35,7 @@ in
     mkKubernetesModule = import ./unit/mkKubernetesModule.nix args;
     importCrdModule = import ./unit/importCrdModule.nix args;
     modules = import ./unit/modules.nix args;
+    manifestsToResources = import ./unit/manifestsToResources.nix args;
   };
   integration = {
     basicResource = import ./integration/basic-resource.nix args;

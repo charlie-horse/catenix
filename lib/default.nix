@@ -20,6 +20,7 @@ let
     render = import ./render.nix { inherit lib; };
     mkKubernetesModule = import ./mkKubernetesModule.nix { inherit lib catenix; };
     importCrdModule = import ./importCrdModule.nix { inherit lib catenix; };
+    manifestsToResources = import ./manifestsToResources.nix { inherit lib catenix; };
   };
 in
 catenix
