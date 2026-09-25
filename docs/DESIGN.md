@@ -64,23 +64,74 @@ exit non-zero:
 nix run github:charlie-horse/catenix#render -- ./app.nix | kubectl apply -f -
 ```
 
+### Helm charts
+
+`importChart` renders a chart with the official `helm` CLI in a derivation,
+reads the manifests back, and defines them in `resources` at `mkDefault`
+priority, so they are type-checked like everything else (building
+`config.build.yaml` or evaluating `config.build.manifests` fails on a type
+error), and plain definitions override them field by field. The chart's own
+CRDs type its custom resources. Like `importCrdModule`, it goes in `imports`,
+so `pkgs` and `catenix` come from `specialArgs` (see `examples/helm.nix`):
+
+```nix
+{ pkgs, catenix, ... }:
+{
+  imports = [
+    (catenix.importChart {
+      inherit pkgs;
+      # A published chart (fixed-output `helm pull`), or any local chart
+      # directory with its dependencies vendored under charts/: ./charts/app,
+      # a `flake = false` input, ...
+      chart = catenix.fetchChart pkgs {
+        repo = "https://charts.jetstack.io"; # or oci://...
+        name = "cert-manager";
+        version = "v1.21.2";
+        hash = "sha256-AsbUc4Q9aVfTmENGPPmjOwC6V6v3MpTN1cKIl8csi10=";
+      };
+      release = {
+        name = "cert-manager";
+        namespace = "cert-manager";
+      };
+      values.crds.enabled = true; # over the chart's values.yaml
+      # kubeVersion, apiVersions, includeCrds, extraArgs: `helm template`'s;
+      # patch = m: ...;            # map (or drop, with null) each manifest
+      # noHooks, skipTests: drop Helm hooks / test hooks
+    })
+  ];
+
+  validation.strict = true;
+
+  resources = {
+    core.v1.Namespace.cert-manager = { }; # Helm doesn't create it either
+    apps.v1.Deployment.cert-manager.spec.replicas = 2; # wins over the chart
+    "cert-manager.io".v1.ClusterIssuer.selfsigned.spec.selfSigned = { };
+  };
+}
+```
+
+The rendering units are also usable on their own: `helmTemplate pkgs { ... }`
+is the derivation (one JSON array of manifests), `manifestsToResources`
+turns any manifest list into such a module, and `fetchChart` is the pull.
+
 ## Flake outputs
 
 | Output | Contents |
 | --- | --- |
-| `lib` | Every `lib/*.nix` unit, keyed by file name (`lib/default.nix`). System-agnostic: units that build derivations take `pkgs` as an argument. |
+| `lib` | Every `lib/*.nix` unit, keyed by file name (`lib/default.nix`), the Helm units included (`helmTemplate`, `fetchChart`, `manifestsToResources`, `importChart`: top-level like the rest rather than under a `helm` attribute, so the key stays the file name). System-agnostic: units that build derivations take `pkgs` as an argument. |
 | `nixosModules.default` | `modules/resources.nix` + `modules/build.nix` + core Kubernetes types from the pinned `kubernetes-src`, for the group/versions a default cluster serves (`apis = "default"`; `mkKubernetesModule` below shows how to add more). Callers run their own `lib.evalModules` and must provide `pkgs` as a module argument (`specialArgs` or `_module.args.pkgs`); see [Usage](#usage). |
 | `tests.systems.<system>` | The sandbox-safe suites as nix-unit `{ expr, expected }` cases, set by nix-unit's flake-parts module from `perSystem.nix-unit.tests` (`tests/flake-module.nix`). Run one with `nix-unit --flake .#tests.systems.x86_64-linux.unit.normalize`. |
-| `legacyPackages.<system>.evalTimeTests` | The suites that build derivations during evaluation (`unit.yaml2json`, `unit.toYaml`, `unit.importCrdModule`, `integration.*`, `e2e.*`). Run one with `nix-unit --flake .#legacyPackages.x86_64-linux.evalTimeTests.e2e.realSpec`. |
-| `checks.<system>` | `nix-unit` (every sandbox-safe suite, from nix-unit's module) plus one named check per eval-time suite (`unit-yaml2json`, …, `e2e-real-crd`). |
+| `legacyPackages.<system>.evalTimeTests` | The suites that build derivations during evaluation (`unit.yaml2json`, `unit.toYaml`, `unit.importCrdModule`, `unit.helmTemplate`, `unit.importChart`, `integration.*`, `e2e.*`). Run one with `nix-unit --flake .#legacyPackages.x86_64-linux.evalTimeTests.e2e.realSpec`. |
+| `checks.<system>` | `nix-unit` (every sandbox-safe suite, from nix-unit's module) plus one named check per eval-time suite (`unit-yaml2json`, …, `unit-helmTemplate`, `unit-importChart`, `integration-helm-chart`, …, `e2e-helm-cert-manager`). |
 | `apps.<system>.render` | `nix run .#render -- <path-to-module.nix>` evaluates that module file with `nixosModules.default` (`pkgs` and `catenix` in `specialArgs`) and prints its `config.build.yaml` (`apps/render.nix`, `apps/renderModule.nix`). |
 | `devShells.<system>.default` | `nix-unit`, `yq-go`, `nixfmt`, `jq`, `kubernetes-helm`. |
 | `formatter.<system>` | `nixfmt`. |
 
 ## Dependency policy
 
-Flake inputs: `nixpkgs`, `kubernetes-src`, `flake-parts` and `nix-unit`.
-Everything else is a `builtins` primop or comes from nixpkgs.
+Flake inputs: `nixpkgs`, `kubernetes-src`, `flake-parts` and `nix-unit`,
+plus `cert-manager-chart` for tests only. Everything else is a `builtins`
+primop or comes from nixpkgs.
 
 - **flake-parts** — the flake is a `flake-parts.lib.mkFlake` module
   (`systems`, `perSystem`, `flake`), and it's how nix-unit's own flake module
@@ -107,6 +158,14 @@ input rather than `github:`: Kubernetes marks `hack/lib/version.sh` as
 fetcher is the one that works everywhere (including sandboxed CI with only git
 egress). Bump it by editing the tag and running `nix flake update kubernetes-src`.
 
+`cert-manager-chart` (`flake = false`) is the published cert-manager chart
+archive, `tarball+https://charts.jetstack.io/charts/cert-manager-v<version>.tgz`,
+used only by the end-to-end Helm test; the pinned `kubernetes-src` contains
+no Helm chart. A chart repository's archive is a plain HTTPS download (no
+GitHub API), so `nix flake lock` locks it; its `narHash` equals
+`fetchChart`'s output hash for the same chart. Bump it by editing the version
+and running `nix flake update cert-manager-chart`.
+
 ## Checks: two runners, one test format
 
 Pure suites go to `perSystem.nix-unit.tests`; nix-unit's flake-parts module
@@ -119,6 +178,24 @@ asserting rendered YAML) can't build inside that sandbox, so
 Failure cases use `helpers.fails value` (deep `tryEval`) with
 `expected = true`, which works under both runners. Test names start with
 `test`.
+
+The Helm suites follow the same split. `unit.manifestsToResources` (pure,
+against the real core types) and `unit.fetchChart` (the derivation only;
+fetching needs the network) run under nix-unit. `unit.helmTemplate`,
+`unit.importChart`, `integration.helmChart` and `e2e.helmCertManager` build
+`helm template` derivations and read them back, so they are eval-time suites
+with the checks `unit-helmTemplate`, `unit-importChart`,
+`integration-helm-chart` and `e2e-helm-cert-manager`. A build failure (a
+missing chart dependency, a template error, values the chart's
+`values.schema.json` rejects) can't be caught by `tryEval`, so those tests
+build the derivation through `pkgs.testers.testBuildFailure` and read its log.
+The fixture charts live in `tests/fixtures/charts/`: `demo` (helpers with
+`define`/`include`, a Deployment, Service, ConfigMaps, a ClusterRole setting a
+namespace, a CRD in `crds/` and a custom resource of it, a hook Job, a test
+Pod, a vendored subchart, `values.schema.json`, YAML 1.1 scalars, empty
+documents) and `missing-dep` (a declared dependency that isn't vendored). The
+e2e suite's chart is the `cert-manager-chart` input, which is also passed to
+nix-unit (`nix-unit.inputs`) since `tests/default.nix` takes it.
 
 ## Interfaces (the contract between units)
 
@@ -654,3 +731,52 @@ gaps below — catenix checks types, not every rule the API server enforces:
   `properties` and `x-kubernetes-preserve-unknown-fields`: the module system
   reserves that name in submodules. Elsewhere (e.g. `ConfigMap.data`) it's
   fine.
+
+### Helm charts
+
+- **Rendering is client-side (`helm template`)**, with no cluster: `lookup`
+  returns an empty map, so charts that reuse existing Secrets through it (a
+  common bitnami pattern for generated passwords) generate new ones instead;
+  `.Capabilities` are Helm's defaults unless `kubeVersion`/`apiVersions` are
+  given; `.Release.IsInstall` is always true (`--is-upgrade` in `extraArgs`
+  flips it).
+- **`rand*`, `uuidv4`, `now`, `genCA`/`genPrivateKey`/`genSelfSignedCert`/
+  `genSignedCert`, `htpasswd` (bcrypt salt) produce different output per
+  render.** The derivation isn't reproducible then: Nix caches the first
+  build, but another machine (or `nix build --rebuild`) renders different
+  secrets or certificates, and a later rebuild changes them on the cluster.
+  This isn't detected: the functions are usually behind a condition (e.g. a
+  password only generated when none is given), so rejecting charts that
+  mention them would reject most, and the output can't tell a random string
+  from a fixed one. Set the values that avoid them (existing Secrets,
+  explicit passwords, cert-manager-issued certificates); `nix build --rebuild`
+  on `helmTemplate`'s derivation shows whether a given configuration is
+  deterministic (cert-manager's is).
+- **Hooks are flattened into ordinary objects**: `helm.sh/hook`,
+  `-weight` and `-delete-policy` are kept as annotations but mean nothing to
+  `kubectl apply`, so pre-install Jobs aren't run first, post-install ones
+  don't wait for the rest, test Pods run at apply time, and delete policies
+  don't apply. Drop them with `noHooks`/`skipTests` when that matters. Helm's
+  install-order sorting of kinds is replaced by catenix's (namespaces, CRDs,
+  then by group/version/kind/name).
+- **Overrides replace lists whole** (a container list, `args`, `env`, ...):
+  every leaf, lists included, is a `mkDefault` definition, and the module
+  system can't merge a list element by element. Change one element with
+  `patch` (or `values`) instead.
+- **Resource keys hold one object**: two manifests with the same
+  group/version/kind/name in different namespaces can't both be imported
+  (it throws). `generateName` objects aren't supported.
+- **Values aren't typed in Nix.** Helm validates them against the chart's
+  `values.schema.json` during the build (the build fails with Helm's message,
+  which `tryEval` can't catch). Typing `values` from that schema with
+  `schemaType` was left out: JSON Schema admits unknown properties unless told
+  otherwise and `required` is judged after merging the chart's own
+  `values.yaml`, while `schemaType`'s submodules are closed and would check
+  only the caller's partial values — so it would reject valid values.
+- **YAML 1.1 is emulated for values only.** Plain `0644`-style octals and
+  `yes`/`on`/`no`/`off`-style booleans are read as Kubernetes does; the same
+  words as map *keys*, and other YAML 1.1-only forms (`1_000`, base 60), are
+  read as YAML 1.2.
+- **Chart CRDs and other CRD imports collide**: importing a CRD the chart
+  also ships (or the same chart twice) is an "already declared" error; drop
+  one side with `includeCrds = false` or `patch`.
