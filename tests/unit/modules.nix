@@ -109,6 +109,13 @@ in
     expected = false;
   };
 
+  # kinds: scopes of declared kinds, filled in by `resourceModule` modules
+
+  testNoKindsDeclared = {
+    expr = (eval [ ]).config.kinds;
+    expected = { };
+  };
+
   # resources, with no kinds declared
 
   testNoResourcesNoManifests = {

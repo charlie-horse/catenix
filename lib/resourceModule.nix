@@ -9,7 +9,8 @@
 # the fields the API server sets itself (`status`, `metadata.uid`, ...).
 # Types are built lazily: until a kind is used, only the top level of its
 # schema is looked at (the module system asks whether instances are
-# submodules).
+# submodules). Each kind's scope is also recorded, read-only, as
+# `kinds.<group>.<version>.<Kind>.namespaced`.
 { lib, catenix }:
 let
   inherit (lib) mkOption types;
@@ -99,15 +100,37 @@ let
         description = (normalize resource.definitions resource.schema).description or null;
       };
     };
+
+  # `kinds.<group>.<version>.<Kind>.namespaced`: the kind's scope, for code
+  # that fills in namespaces as `kubectl apply -n` does (manifestsToResources).
+  scopeModule =
+    {
+      group,
+      version,
+      kind,
+      namespaced,
+      ...
+    }:
+    {
+      options.${groupKey group}.${version}.${kind}.namespaced = mkOption {
+        type = types.bool;
+        default = namespaced;
+        readOnly = true;
+        description = "Whether ${kind} objects are namespaced.";
+      };
+    };
 in
 {
   inherit instanceType;
 
-  # No `default`/`description` here: other declarations of `resources` merge
-  # with this one, and only one of them may set those.
+  # No `default`/`description` here: other declarations of `resources` and
+  # `kinds` merge with these, and only one of them may set those.
   mkResourceModule = resources: {
     options.resources = mkOption {
       type = types.submodule { imports = map kindModule resources; };
+    };
+    options.kinds = mkOption {
+      type = types.submodule { imports = map scopeModule resources; };
     };
   };
 }

@@ -295,6 +295,12 @@ which rejects any value. Ordinary metadata (`labels`, `annotations`,
 schema doesn't declare one. The kind's `description` goes on the `<Kind>`
 option. `resourceModule.instanceType resource` is exposed for testing.
 
+The module also declares `options.kinds` the same way: a submodule with a
+read-only `kinds.<group|core>.<version>.<Kind>.namespaced` bool per kind,
+defaulting to the record's scope. It is how code outside the schema (e.g.
+`manifestsToResources`, filling in namespaces as `kubectl apply -n` does)
+learns a declared kind's scope from the evaluated configuration.
+
 Laziness is shallow: building the module reads every kind's top-level schema
 (the module system inspects each kind option's type), while nested schemas and
 `definitions` stay unforced — the real spec plus one declared ConfigMap
@@ -419,7 +425,9 @@ declarations from `resourceModule`. For that merge to work, every other
 declaration of `options.resources` (each `resourceModule`) sets only `type`, as
 a plain `types.submodule` with no `freeformType`, whose group and version
 levels are nested option sets and whose first real option is the kind — this
-module owns `default`, `description`, and the freeform type.
+module owns `default`, `description`, and the freeform type. It also owns the
+`default = { }` of `options.kinds` (internal), whose per-kind options
+`resourceModule` declares.
 
 ### `modules/build.nix`
 

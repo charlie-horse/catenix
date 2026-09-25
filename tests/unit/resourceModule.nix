@@ -816,6 +816,40 @@ in
     expected = true;
   };
 
+  # mkResourceModule: scopes, for code that fills in namespaces (manifestsToResources)
+
+  testKindsRecordScope = {
+    expr =
+      (eval [
+        (mkResourceModule [
+          gadget
+          gizmo
+        ])
+        (mkResourceModule [
+          widget
+          knob
+        ])
+      ]).config.kinds;
+    expected = {
+      core.v1.Gadget.namespaced = true;
+      "example.io".v1.Gizmo.namespaced = false;
+      "example.com".v1 = {
+        Widget.namespaced = true;
+        Knob.namespaced = false;
+      };
+    };
+  };
+
+  testKindsReadOnly = {
+    expr =
+      helpers.fails
+        (eval [
+          (mkResourceModule [ gadget ])
+          { kinds.core.v1.Gadget.namespaced = false; }
+        ]).config.kinds;
+    expected = true;
+  };
+
   testInstanceTypeRejectsInjectedFields = {
     expr = map (value: helpers.fails (plain (evalType (instanceType widget) value))) [
       { apiVersion = "example.com/v1"; }

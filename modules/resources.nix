@@ -1,6 +1,6 @@
 # The `resources.<group|core>.<version>.<Kind>.<name>` option and strict mode.
-# Kinds are declared by `resourceModule` modules, whose `resources` submodules
-# merge into this one; anything else is freeform unless `validation.strict`.
+# Kinds are declared by `resourceModule` modules, whose `resources` (and
+# `kinds`) submodules merge into this one; anything else is freeform unless `validation.strict`.
 { config, lib, ... }:
 let
   inherit (lib) mkOption types;
@@ -13,6 +13,17 @@ in
 {
   options = {
     validation.strict = lib.mkEnableOption "strict Kubernetes resource typing";
+
+    kinds = mkOption {
+      type = types.submodule { };
+      default = { };
+      internal = true;
+      description = ''
+        The scope of every declared kind, as
+        `kinds.<group>.<version>.<Kind>.namespaced` (read-only), set by the
+        modules that declare kinds.
+      '';
+    };
 
     resources = mkOption {
       type = types.submodule {
