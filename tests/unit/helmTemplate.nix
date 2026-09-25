@@ -281,6 +281,16 @@ in
     ];
   };
 
+  # Helm validates values against the chart's values.schema.json.
+  testValuesSchemaEnforced = {
+    expr = lib.hasInfix "replicas" (
+      failureLog (render {
+        values.replicas = "many";
+      })
+    );
+    expected = true;
+  };
+
   testTemplateErrorFailsBuild = {
     expr =
       let
