@@ -1,0 +1,35 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "demo.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "demo.labels" . | nindent 4 }}
+spec:
+  {{- if .Values.replicasAsString }}
+  replicas: {{ .Values.replicas | quote }}
+  {{- else }}
+  replicas: {{ .Values.replicas }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "demo.labels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "demo.labels" . | nindent 8 }}
+    spec:
+      containers:
+        - name: web
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          ports:
+            - containerPort: {{ .Values.port }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/demo
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "demo.fullname" . }}
+            # YAML 1.1 octal, as Kubernetes reads it: 420.
+            defaultMode: 0644

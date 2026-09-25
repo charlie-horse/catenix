@@ -74,7 +74,7 @@ nix run github:charlie-horse/catenix#render -- ./app.nix | kubectl apply -f -
 | `legacyPackages.<system>.evalTimeTests` | The suites that build derivations during evaluation (`unit.yaml2json`, `unit.toYaml`, `unit.importCrdModule`, `integration.*`, `e2e.*`). Run one with `nix-unit --flake .#legacyPackages.x86_64-linux.evalTimeTests.e2e.realSpec`. |
 | `checks.<system>` | `nix-unit` (every sandbox-safe suite, from nix-unit's module) plus one named check per eval-time suite (`unit-yaml2json`, …, `e2e-real-crd`). |
 | `apps.<system>.render` | `nix run .#render -- <path-to-module.nix>` evaluates that module file with `nixosModules.default` (`pkgs` and `catenix` in `specialArgs`) and prints its `config.build.yaml` (`apps/render.nix`, `apps/renderModule.nix`). |
-| `devShells.<system>.default` | `nix-unit`, `yq-go`, `nixfmt`, `jq`. |
+| `devShells.<system>.default` | `nix-unit`, `yq-go`, `nixfmt`, `jq`, `kubernetes-helm`. |
 | `formatter.<system>` | `nixfmt`. |
 
 ## Dependency policy
@@ -95,6 +95,11 @@ Everything else is a `builtins` primop or comes from nixpkgs.
   `render.toYaml`. (`pkgs.formats.yaml` isn't used: its encoder, remarshal
   with PyYAML, leaves strings like `08` and `0o17` unquoted, which Kubernetes'
   Go-based parser reads as numbers.)
+- **kubernetes-helm** (nixpkgs) — Helm charts are Go templates plus Helm's
+  own functions (Sprig, `include`, `tpl`, `lookup`, `.Capabilities`, ...);
+  re-implementing that in Nix would be a large, never-quite-equal copy, so the
+  official `helm` CLI renders them. Scoped to `lib/helmTemplate.nix`
+  (`helm template`) and `lib/fetchChart.nix` (`helm pull`).
 
 `kubernetes-src` is a `git+https://github.com/...?ref=refs/tags/<tag>&shallow=1`
 input rather than `github:`: Kubernetes marks `hack/lib/version.sh` as
@@ -414,6 +419,46 @@ imports = [
 ### `lib/importCrdModule.nix` → `importCrdModule { pkgs, crdFile }`
 
 `yaml2json` → `crd.loadCrds` → `resourceModule.mkResourceModule`.
+
+### `lib/helmTemplate.nix` → `helmTemplate pkgs { chart, release, values ? { }, kubeVersion ? null, apiVersions ? [ ], includeCrds ? true, extraArgs ? [ ] }`
+
+A `runCommand` derivation (`helm-template-<release>.json`) whose output is
+one JSON array of the manifests `helm template` renders:
+
+- `chart`: a chart directory or `.tgz` — a path (copied to the store), a
+  store path, or a derivation such as `fetchChart`'s or a `flake = false`
+  input. The build has no network, so declared dependencies must already be
+  under the chart's `charts/` (published archives include them; for a source
+  checkout run `helm dependency build` first). Helm refuses a chart missing one
+  (`found in Chart.yaml, but missing in charts/ directory: <name>`), and the
+  build fails with that message plus a hint.
+- `release`: `{ name; namespace ? "default"; }` → the release name and
+  `--namespace` (`.Release.Namespace`).
+- `values`: `builtins.toJSON` (JSON is YAML) through `passAsFile`, passed with
+  `--values` over the chart's `values.yaml`, subcharts' values nested under
+  their names as usual.
+- `kubeVersion` → `--kube-version`, `apiVersions` → one `--api-versions`
+  each (`.Capabilities`); Helm's built-in defaults otherwise (Helm 4.3:
+  Kubernetes v1.37.0).
+- `includeCrds` → `--include-crds` (the chart's `crds/` directory); CRDs in
+  `templates/` are rendered either way.
+- `extraArgs` go last, verbatim (e.g. `--skip-tests`, `--no-hooks`,
+  `--show-only`).
+
+`HOME` and `HELM_{CACHE,CONFIG,DATA}_HOME` point into the build directory. The
+builder is one pipeline, `helm template ... | yq ... > $out`: Helm splits and
+cleans the documents by its own rules and prints them `---`-separated; yq
+(`eval-all`) collects the stream into one array, dropping empty
+(comment-only) documents, so no second conversion is needed. yq parses YAML
+1.2, while Kubernetes and Helm's install path (`sigs.k8s.io/yaml`, a
+go-yaml v2 fork) read YAML 1.1; yq is told the plain-scalar values where
+they differ: integers with a bare leading zero are octal (`defaultMode: 0644`
+is 420, as in bitnami's redis chart), and `y`/`yes`/`on`/`n`/`no`/`off` (three
+casings each) are booleans. Quoted scalars and map keys are unchanged. Unlike
+`yaml2json`, a failure fails the build (`helm`'s error on stderr) rather than
+becoming a catchable `throw`: the output is meant to be built directly too,
+and a "successful" build holding an error message would be a trap. Tests
+check failures with `pkgs.testers.testBuildFailure`.
 
 ### `lib/manifestsToResources.nix` → `manifestsToResources { manifests, namespace ? null, noHooks ? false, skipTests ? false }`
 

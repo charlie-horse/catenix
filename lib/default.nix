@@ -21,6 +21,7 @@ let
     mkKubernetesModule = import ./mkKubernetesModule.nix { inherit lib catenix; };
     importCrdModule = import ./importCrdModule.nix { inherit lib catenix; };
     manifestsToResources = import ./manifestsToResources.nix { inherit lib catenix; };
+    helmTemplate = import ./helmTemplate.nix { inherit lib; };
   };
 in
 catenix

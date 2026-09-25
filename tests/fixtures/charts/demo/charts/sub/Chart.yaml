@@ -1,0 +1,4 @@
+apiVersion: v2
+name: sub
+description: A vendored subchart of the demo fixture chart.
+version: 0.1.0

@@ -58,6 +58,7 @@
                 pkgs.yq-go
                 pkgs.nixfmt
                 pkgs.jq
+                pkgs.kubernetes-helm
               ];
             };
 

@@ -28,6 +28,7 @@
         "yaml2json"
         "toYaml"
         "importCrdModule"
+        "helmTemplate"
       ];
 
       evalTimeTests = {
@@ -65,6 +66,7 @@
         unit-yaml2json = evalTime "unit-yaml2json" evalTimeTests.unit.yaml2json;
         unit-toYaml = evalTime "unit-toYaml" evalTimeTests.unit.toYaml;
         unit-importCrdModule = evalTime "unit-importCrdModule" evalTimeTests.unit.importCrdModule;
+        unit-helmTemplate = evalTime "unit-helmTemplate" evalTimeTests.unit.helmTemplate;
         integration-basic-resource = evalTime "integration-basic-resource" evalTimeTests.integration.basicResource;
         integration-crd-import = evalTime "integration-crd-import" evalTimeTests.integration.crdImport;
         e2e-real-spec = evalTime "e2e-real-spec" evalTimeTests.e2e.realSpec;
