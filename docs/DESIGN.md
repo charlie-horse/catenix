@@ -493,9 +493,18 @@ imports = [
 ];
 ```
 
+### `lib/crdModule.nix` → `crdModule documents`
+
+Pure. `documents`: a list of already-parsed documents, as `crd.loadCrds`
+takes them. Returns `resourceModule.mkResourceModule (crd.loadCrds
+documents)`: the resource module declaring (and typing) every served version
+of the CRDs among them. Throws as `crd.loadCrds` does (no CRDs at all,
+invalid shape, duplicates).
+
 ### `lib/importCrdModule.nix` → `importCrdModule { pkgs, crdFile }`
 
-`yaml2json` → `crd.loadCrds` → `resourceModule.mkResourceModule`.
+`crdModule (yaml2json pkgs crdFile)`: a thin adapter whose only
+import-from-derivation is the `yaml2json` call.
 
 ### `lib/helmTemplate.nix` → `helmTemplate pkgs { chart, release, values ? { }, kubeVersion ? null, apiVersions ? [ ], includeCrds ? true, extraArgs ? [ ] }`
 

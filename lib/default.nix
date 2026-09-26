@@ -19,6 +19,7 @@ let
     yaml2json = import ./yaml2json.nix;
     render = import ./render.nix { inherit lib; };
     mkKubernetesModule = import ./mkKubernetesModule.nix { inherit lib catenix; };
+    crdModule = import ./crdModule.nix { inherit lib catenix; };
     importCrdModule = import ./importCrdModule.nix { inherit lib catenix; };
     manifestsToResources = import ./manifestsToResources.nix { inherit lib catenix; };
     helmTemplate = import ./helmTemplate.nix { inherit lib; };

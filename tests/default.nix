@@ -35,6 +35,7 @@ in
     render = import ./unit/render.nix args;
     toYaml = import ./unit/toYaml.nix args;
     mkKubernetesModule = import ./unit/mkKubernetesModule.nix args;
+    crdModule = import ./unit/crdModule.nix args;
     importCrdModule = import ./unit/importCrdModule.nix args;
     modules = import ./unit/modules.nix args;
     manifestsToResources = import ./unit/manifestsToResources.nix args;
