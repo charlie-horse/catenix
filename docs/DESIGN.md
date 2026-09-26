@@ -120,9 +120,11 @@ turns any manifest list into such a module, and `fetchChart` is the pull.
 | --- | --- |
 | `lib` | Every `lib/*.nix` unit, keyed by file name (`lib/default.nix`), the Helm units included (`helmTemplate`, `fetchChart`, `manifestsToResources`, `importChart`: top-level like the rest rather than under a `helm` attribute, so the key stays the file name). System-agnostic: units that build derivations take `pkgs` as an argument. |
 | `nixosModules.default` | `modules/resources.nix` + `modules/build.nix` + core Kubernetes types from the pinned `kubernetes-src`, for the group/versions a default cluster serves (`apis = "default"`; `mkKubernetesModule` below shows how to add more). Callers run their own `lib.evalModules` and must provide `pkgs` as a module argument (`specialArgs` or `_module.args.pkgs`); see [Usage](#usage). |
-| `tests.systems.<system>` | The sandbox-safe suites as nix-unit `{ expr, expected }` cases, set by nix-unit's flake-parts module from `perSystem.nix-unit.tests` (`tests/flake-module.nix`). Run one with `nix-unit --flake .#tests.systems.x86_64-linux.unit.normalize`. |
-| `legacyPackages.<system>.evalTimeTests` | The suites that build derivations during evaluation (`unit.yaml2json`, `unit.toYaml`, `unit.importCrdModule`, `unit.helmTemplate`, `unit.importChart`, `integration.*`, `e2e.*`). Run one with `nix-unit --flake .#legacyPackages.x86_64-linux.evalTimeTests.e2e.realSpec`. |
-| `checks.<system>` | `nix-unit` (every sandbox-safe suite, from nix-unit's module) plus one named check per eval-time suite (`unit-yaml2json`, …, `unit-helmTemplate`, `unit-importChart`, `integration-helm-chart`, …, `e2e-helm-cert-manager`). |
+| `tests` | The system-agnostic suites (`tests/agnostic.nix`) as nix-unit `{ expr, expected }` cases: `unit.*` (every unit but `yaml2json`, `toYaml`, `helmTemplate` and the IFD adapters), `integration.*`, `e2e.*`. Run one with `nix-unit --flake .#tests.unit.normalize` (no system in the path). |
+| `tests.systems.<system>` | Set by nix-unit's flake-parts module: `system-agnostic` is a copy of `tests` (minus `systems`), which `checks.<system>.nix-unit` runs. There are no per-system nix-unit suites. |
+| `legacyPackages.<system>.perSystemTests` | The suites that build derivations during evaluation, with the host's `pkgs` (`tests/per-system.nix`): `unit.yaml2json`, `unit.toYaml`, `unit.helmTemplate`, one smoke case each in `unit.importCrdModule` and `unit.importChart`, `contracts.<recording>`, `rendering.*`. Run one with `nix-unit --flake .#legacyPackages.x86_64-linux.perSystemTests.contracts.cert-manager`. |
+| `legacyPackages.<system>.recordings.<name>` | Each recording in `tests/fixtures/recorded/` built afresh from its real call (`tests/recordings.nix`), as pretty-printed JSON; see [Recordings](#recordings-mocked-import-from-derivation). |
+| `checks.<system>` | `nix-unit` (every system-agnostic suite, from nix-unit's module) plus one named eval-time check per per-system suite, `<group>-<suite>`: `unit-yaml2json`, `unit-toYaml`, `unit-helmTemplate`, `unit-importCrdModule`, `unit-importChart`, `contracts-<recording>`, `rendering-basicResource`, …, `rendering-helmCertManager`. |
 | `apps.<system>.render` | `nix run .#render -- <path-to-module.nix>` evaluates that module file with `nixosModules.default` (`pkgs` and `catenix` in `specialArgs`) and prints its `config.build.yaml` (`apps/render.nix`, `apps/renderModule.nix`). |
 | `devShells.<system>.default` | `nix-unit`, `yq-go`, `nixfmt`, `jq`, `kubernetes-helm`. |
 | `formatter.<system>` | `nixfmt`. |
@@ -168,36 +170,91 @@ and running `nix flake update cert-manager-chart`.
 
 ## Checks: two runners, one test format
 
-Pure suites go to `perSystem.nix-unit.tests`; nix-unit's flake-parts module
-runs them in the sandboxed `checks.<system>.nix-unit`, with the flake inputs
-passed in through `nix-unit.inputs`. Suites that read a derivation's output
-back during evaluation (YAML→JSON, YAML encoding, CRD import, anything
-asserting rendered YAML) can't build inside that sandbox, so
-`tests/flake-module.nix` evaluates them during `nix flake check` itself with
-`lib.debug.runTests`, one named check per suite. Both runners read the same `{ expr, expected }` cases.
-Failure cases use `helpers.fails value` (deep `tryEval`) with
-`expected = true`, which works under both runners. Test names start with
-`test`.
+Every suite is a set of nix-unit `{ expr, expected }` cases; test names start
+with `test`. Failure cases use `helpers.fails value` (deep `tryEval`) with
+`expected = true`, which works under both runners below.
 
-The Helm suites follow the same split. `unit.manifestsToResources` and
-`unit.chartModule` (pure, against the real core types; `chartModule` is fed
-the demo chart's render as inline Nix) and `unit.fetchChart` (the derivation
-only; fetching needs the network) run under nix-unit, as does
-`unit.crdModule` (inline CRD documents). `unit.helmTemplate`,
-`unit.importChart`, `integration.helmChart` and `e2e.helmCertManager` build
-`helm template` derivations and read them back, so they are eval-time suites
-with the checks `unit-helmTemplate`, `unit-importChart`,
-`integration-helm-chart` and `e2e-helm-cert-manager`. A build failure (a
-missing chart dependency, a template error, values the chart's
-`values.schema.json` rejects) can't be caught by `tryEval`, so those tests
-build the derivation through `pkgs.testers.testBuildFailure` and read its log.
-The fixture charts live in `tests/fixtures/charts/`: `demo` (helpers with
-`define`/`include`, a Deployment, Service, ConfigMaps, a ClusterRole setting a
-namespace, a CRD in `crds/` and a custom resource of it, a hook Job, a test
-Pod, a vendored subchart, `values.schema.json`, YAML 1.1 scalars, empty
-documents) and `missing-dep` (a declared dependency that isn't vendored). The
-e2e suite's chart is the `cert-manager-chart` input, which is also passed to
-nix-unit (`nix-unit.inputs`) since `tests/default.nix` takes it.
+**System-agnostic suites** (`tests/agnostic.nix`, the flake's `tests`
+output) need no host system: nothing in them builds at evaluation time.
+nix-unit's flake-parts module (`enableSystemAgnostic`) copies them into every
+system's `tests.systems.<system>.system-agnostic` and runs them in the
+sandboxed `checks.<system>.nix-unit`, with the flake inputs passed in through
+`nix-unit.inputs`. Their arguments keep them honest:
+
+- `pkgs` is `throw "catenix tests: a system-agnostic suite forced pkgs"`. It
+  is still the modules' `pkgs` argument (`helpers.eval pkgs`), unforced
+  unless something reads `build.yaml`; a suite that comes to depend on the
+  host fails with that message instead of silently running per system.
+- `referencePkgs` is `nixpkgs.legacyPackages.x86_64-linux`, for the suites
+  that only instantiate derivations (`unit.modules` compares `build.yaml`'s
+  `drvPath`, `unit.fetchChart` inspects the fixed-output derivation).
+  Instantiating needs no builder, so the result is the same on every host.
+- `recorded "<name>"` is `lib.importJSON tests/fixtures/recorded/<name>.json`:
+  what an import-from-derivation call would return (below).
+
+So the pure cores are tested against real tool output without running the
+tools: `unit.crdModule` reads the recorded `crd-widget` documents,
+`unit.chartModule` the recorded `demo-rel` render, and the integration and
+e2e suites (`crdImport`, `helmChart`, `realCrd`, `helmCertManager`) import
+`crdModule`/`chartModule` over recordings, asserting on `build.manifests`
+(type errors, overrides, strict mode, CRD-typed custom resources).
+
+**Per-system suites** (`tests/per-system.nix`,
+`legacyPackages.<system>.perSystemTests`) read a derivation's output back
+during evaluation, which the nix-unit sandbox can't build, so
+`tests/flake-module.nix` evaluates each during `nix flake check` itself with
+`lib.debug.runTests`, as the check `<group>-<suite>`; a failure reports where
+the result first differs from the expectation (`helpers.firstDifference`),
+since recordings are too large to print whole. They are:
+
+- `unit.yaml2json`, `unit.toYaml`, `unit.helmTemplate`: the IFD units.
+- `unit.importCrdModule`, `unit.importChart`: one smoke case each for the
+  adapter's wiring (a string or path file, a parse error; `values`,
+  `includeCrds`, the release namespace, `patch`, `skipTests`, `_file`). What
+  the module does is the agnostic `crdModule`/`chartModule` suites' job.
+- `contracts.<name>`: each recording equals its real call.
+- `rendering.*`: the byte-level `readFile build.yaml` cases. Each integration
+  and e2e file returns `{ agnostic; rendering; }`, sharing its setup; the
+  agnostic side has a `build.manifests` twin of each YAML case.
+
+A Helm build failure (a missing chart dependency, a template error, values
+the chart's `values.schema.json` rejects) can't be caught by `tryEval`, so
+`unit.helmTemplate` builds the derivation through
+`pkgs.testers.testBuildFailure` and reads its log. The fixture charts live in
+`tests/fixtures/charts/`: `demo` (helpers with `define`/`include`, a
+Deployment, Service, ConfigMaps, a ClusterRole setting a namespace, a CRD in
+`crds/` and a custom resource of it, a hook Job, a test Pod, a vendored
+subchart, `values.schema.json`, YAML 1.1 scalars, empty documents) and
+`missing-dep` (a declared dependency that isn't vendored). The e2e chart is
+the `cert-manager-chart` input, also passed to nix-unit (`nix-unit.inputs`)
+since the suites' arguments include it.
+
+### Recordings: mocked import-from-derivation
+
+`tests/fixtures/recorded/<name>.json` holds what `yaml2json` or `helmTemplate`
+(read back, as `importChart` does) returns for one input the suites use;
+`tests/recordings.nix` names the real call behind each:
+
+| Recording | Real call |
+| --- | --- |
+| `crd-widget`, `crd-portal` | `yaml2json` of `tests/fixtures/crd-{widget,portal}.yaml` |
+| `sample-controller-crd` | `yaml2json` of the sample-controller CRD in `kubernetes-src` |
+| `demo-rel` | `helmTemplate` of the `demo` chart, release `rel` in `apps` |
+| `demo-web`, `demo-web-<values>` | the `demo` chart, release `web` in `apps`, per `values` used by `integration.helmChart` |
+| `cert-manager` | the `cert-manager-chart` input (v1.21.2), release `cert-manager` in `cert-manager`, `crds.enabled` (about 1 MB, mostly CRD schemas) |
+
+Each is `builtins.toJSON` of the real value (keys sorted) pretty-printed by
+`jq`, so a re-recording diffs line by line. `contracts.<name>` fails, naming
+the first differing path, when a recording no longer matches its call (a
+tool, chart or fixture changed). To re-record one:
+
+```sh
+cp $(nix build --print-out-paths .#legacyPackages.x86_64-linux.recordings.<name>) \
+  tests/fixtures/recorded/<name>.json
+```
+
+A new recording is an entry in `tests/recordings.nix` plus the recorded file,
+added to git (flakes only see tracked files).
 
 ## Interfaces (the contract between units)
 
@@ -206,7 +263,8 @@ to a thin edge: exactly `yaml2json`, `helmTemplate` plus `importChart`'s
 read-back of its output, and `render.toYaml`. `importCrdModule` and
 `importChart` are adapters over the pure `crdModule` and `chartModule`, which
 take already-parsed documents and hold all the logic, so it is tested without
-building anything.
+building anything, against recordings of the real tools' output (see
+[Checks](#checks-two-runners-one-test-format)).
 
 ### Resource schema record
 
@@ -698,7 +756,8 @@ it on `examples/`.
    commit, re-run integration/e2e.
 2. Repeat until every check is green, then write `examples/` (illustrative only).
 
-Fast loop: `nix develop -c nix-unit --flake .#tests.systems.<system>.unit.<unit>`.
+Fast loop: `nix develop -c nix-unit --flake .#tests.unit.<unit>` (per-system
+suites: `.#legacyPackages.<system>.perSystemTests.<group>.<suite>`).
 
 ## Known limitations
 
