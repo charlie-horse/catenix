@@ -179,9 +179,11 @@ Failure cases use `helpers.fails value` (deep `tryEval`) with
 `expected = true`, which works under both runners. Test names start with
 `test`.
 
-The Helm suites follow the same split. `unit.manifestsToResources` (pure,
-against the real core types) and `unit.fetchChart` (the derivation only;
-fetching needs the network) run under nix-unit. `unit.helmTemplate`,
+The Helm suites follow the same split. `unit.manifestsToResources` and
+`unit.chartModule` (pure, against the real core types; `chartModule` is fed
+the demo chart's render as inline Nix) and `unit.fetchChart` (the derivation
+only; fetching needs the network) run under nix-unit, as does
+`unit.crdModule` (inline CRD documents). `unit.helmTemplate`,
 `unit.importChart`, `integration.helmChart` and `e2e.helmCertManager` build
 `helm template` derivations and read them back, so they are eval-time suites
 with the checks `unit-helmTemplate`, `unit-importChart`,
@@ -198,6 +200,13 @@ e2e suite's chart is the `cert-manager-chart` input, which is also passed to
 nix-unit (`nix-unit.inputs`) since `tests/default.nix` takes it.
 
 ## Interfaces (the contract between units)
+
+Import-from-derivation (a build run on the host during evaluation) is kept
+to a thin edge: exactly `yaml2json`, `helmTemplate` plus `importChart`'s
+read-back of its output, and `render.toYaml`. `importCrdModule` and
+`importChart` are adapters over the pure `crdModule` and `chartModule`, which
+take already-parsed documents and hold all the logic, so it is tested without
+building anything.
 
 ### Resource schema record
 
@@ -618,22 +627,30 @@ resource key holds one object. The module reads `config.kinds` only inside
 values (a plain `if`, not `mkIf`: even a disabled definition of an option a
 typed cluster-scoped `metadata` doesn't declare is an error).
 
-### `lib/importChart.nix` → `importChart { pkgs, chart, release, values ? { }, kubeVersion ? null, apiVersions ? [ ], includeCrds ? true, extraArgs ? [ ], patch ? (m: m), noHooks ? false, skipTests ? false }`
+### `lib/chartModule.nix` → `chartModule { manifests, release, chartName, patch ? (m: m), noHooks ? false, skipTests ? false }`
 
-A Helm chart as a module. `helmTemplate` (the first eight arguments) renders
-it; the JSON array is read back with `builtins.fromJSON (builtins.readFile
-...)` — import-from-derivation, like `yaml2json`. `patch` maps each manifest
+Pure. An already-rendered Helm chart as a module. `manifests` is the list
+`helmTemplate` renders (parsed); `release` is `{ name; namespace ?
+"default"; }`; `chartName` only labels the module. `patch` maps each manifest
 (return `null` to drop one), before anything else, so a patched CRD types
 what it defines. The chart's `apiextensions.k8s.io/v1`
 CustomResourceDefinitions (from `crds/` with `includeCrds`, or templated) are
-imported with `crd.loadCrds` + `resourceModule.mkResourceModule`, so the
-chart's custom resources are typed (and declared, so strict mode accepts
-them); they are also emitted as resources themselves. Every manifest then
-goes through `manifestsToResources` with `namespace = release.namespace or
-"default"` and `noHooks`/`skipTests`. The module's `_file` is `helm release
-<name> (chart <chart>)`, so a type error names the release. It sets `imports`
-only, so it is itself imported (`pkgs` must then come from `specialArgs`,
-as with `importCrdModule`).
+imported with `crdModule`, so the chart's custom resources are typed (and
+declared, so strict mode accepts them); they are also emitted as resources
+themselves. Every manifest then goes through `manifestsToResources` with
+`namespace = release.namespace or "default"` and `noHooks`/`skipTests`. The
+module's `_file` is `helm release <name> (chart <chartName>)`, so a type
+error names the release. It sets `_file` and `imports` only.
+
+### `lib/importChart.nix` → `importChart { pkgs, chart, release, values ? { }, kubeVersion ? null, apiVersions ? [ ], includeCrds ? true, extraArgs ? [ ], patch ? (m: m), noHooks ? false, skipTests ? false }`
+
+A Helm chart as a module; a thin adapter. `helmTemplate` (the first eight
+arguments) renders it and the JSON array is read back with `builtins.fromJSON
+(builtins.readFile ...)` — import-from-derivation, like `yaml2json`, and the
+only one here. The rest is `chartModule { manifests; release; patch;
+noHooks; skipTests; chartName = baseNameOf (toString chart); }`. It sets
+`imports` only, so it is itself imported (`pkgs` must then come from
+`specialArgs`, as with `importCrdModule`).
 
 A kind declared twice fails with the module system's "already declared"
 error: don't also `importCrdModule` the chart's CRDs (or import two releases

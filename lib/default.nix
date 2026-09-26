@@ -23,6 +23,7 @@ let
     importCrdModule = import ./importCrdModule.nix { inherit lib catenix; };
     manifestsToResources = import ./manifestsToResources.nix { inherit lib catenix; };
     helmTemplate = import ./helmTemplate.nix { inherit lib; };
+    chartModule = import ./chartModule.nix { inherit lib catenix; };
     importChart = import ./importChart.nix { inherit lib catenix; };
     fetchChart = import ./fetchChart.nix { inherit lib; };
   };

@@ -40,6 +40,7 @@ in
     modules = import ./unit/modules.nix args;
     manifestsToResources = import ./unit/manifestsToResources.nix args;
     helmTemplate = import ./unit/helmTemplate.nix args;
+    chartModule = import ./unit/chartModule.nix args;
     importChart = import ./unit/importChart.nix args;
     fetchChart = import ./unit/fetchChart.nix args;
   };
