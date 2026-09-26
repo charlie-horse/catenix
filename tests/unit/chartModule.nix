@@ -1,218 +1,31 @@
 # Unit tests for lib/chartModule.nix: an already-rendered Helm chart (its
 # manifest list) as a module — patched, its CRDs typing its custom resources,
-# and every object defined through `manifestsToResources`. Pure: the manifests
-# are inline Nix, what `helmTemplate` renders for tests/fixtures/charts/demo as
-# release `rel` in `apps` (`pkgs` is only an unforced module argument).
+# and every object defined through `manifestsToResources`. System-agnostic:
+# the manifests are the recording of what `helmTemplate` renders for
+# tests/fixtures/charts/demo as release `rel` in `apps` (checked against helm
+# by tests/per-system.nix's `contracts.demo-rel`), and `pkgs` is only an
+# unforced module argument. This also covers `importChart`, which is this over
+# `helmTemplate` (tests/unit/importChart.nix checks that wiring).
 {
   lib,
   catenix,
   pkgs,
   helpers,
+  recorded,
   catenixModule,
   ...
 }:
 let
+  # What `helmTemplate` renders for tests/fixtures/charts/demo as release
+  # `rel` in `apps` (recorded), in `helm template`'s order.
+  demoManifests = recorded "demo-rel";
+
   labels = {
     "app.kubernetes.io/name" = "demo";
     "app.kubernetes.io/instance" = "rel";
   };
 
-  widgetCrd = {
-    apiVersion = "apiextensions.k8s.io/v1";
-    kind = "CustomResourceDefinition";
-    metadata.name = "widgets.example.com";
-    spec = {
-      group = "example.com";
-      scope = "Namespaced";
-      names = {
-        kind = "Widget";
-        plural = "widgets";
-        singular = "widget";
-      };
-      versions = [
-        {
-          name = "v1";
-          served = true;
-          storage = true;
-          schema.openAPIV3Schema = {
-            type = "object";
-            properties.spec = {
-              type = "object";
-              required = [ "size" ];
-              properties = {
-                size = {
-                  type = "integer";
-                  minimum = 1;
-                };
-                enabled.type = "boolean";
-                color = {
-                  type = "string";
-                  enum = [
-                    "red"
-                    "green"
-                    "blue"
-                  ];
-                };
-              };
-            };
-          };
-          subresources.status = { };
-        }
-      ];
-    };
-  };
-
-  # The demo chart's render, in `helm template`'s order.
-  demoManifests = [
-    widgetCrd
-    {
-      apiVersion = "v1";
-      kind = "ConfigMap";
-      metadata.name = "rel-sub";
-      data.message = "from-sub";
-    }
-    {
-      apiVersion = "v1";
-      kind = "ConfigMap";
-      metadata = {
-        name = "rel-demo";
-        namespace = "apps";
-        creationTimestamp = null;
-      };
-      data = {
-        greeting = "hello";
-        kubeVersion = "v1.37.0";
-      };
-    }
-    {
-      apiVersion = "rbac.authorization.k8s.io/v1";
-      kind = "ClusterRole";
-      metadata = {
-        name = "rel-demo";
-        namespace = "apps";
-      };
-      rules = [
-        {
-          apiGroups = [ "example.com" ];
-          resources = [ "widgets" ];
-          verbs = [
-            "get"
-            "list"
-            "watch"
-          ];
-        }
-      ];
-    }
-    {
-      apiVersion = "v1";
-      kind = "Service";
-      metadata = {
-        name = "rel-demo";
-        inherit labels;
-      };
-      spec = {
-        selector = labels;
-        ports = [
-          {
-            port = 80;
-            targetPort = 8080;
-          }
-        ];
-      };
-    }
-    {
-      apiVersion = "apps/v1";
-      kind = "Deployment";
-      metadata = {
-        name = "rel-demo";
-        namespace = "apps";
-        inherit labels;
-      };
-      spec = {
-        replicas = 2;
-        selector.matchLabels = labels;
-        template = {
-          metadata = { inherit labels; };
-          spec = {
-            containers = [
-              {
-                name = "web";
-                image = "nginx:1.27";
-                ports = [ { containerPort = 8080; } ];
-                volumeMounts = [
-                  {
-                    name = "config";
-                    mountPath = "/etc/demo";
-                  }
-                ];
-              }
-            ];
-            volumes = [
-              {
-                name = "config";
-                configMap = {
-                  name = "rel-demo";
-                  defaultMode = 420;
-                };
-              }
-            ];
-          };
-        };
-      };
-    }
-    {
-      apiVersion = "example.com/v1";
-      kind = "Widget";
-      metadata.name = "rel-demo";
-      spec = {
-        size = 3;
-        enabled = true;
-        color = "blue";
-      };
-    }
-    {
-      apiVersion = "v1";
-      kind = "Pod";
-      metadata = {
-        name = "rel-demo-test";
-        annotations."helm.sh/hook" = "test";
-      };
-      spec = {
-        restartPolicy = "Never";
-        containers = [
-          {
-            name = "wget";
-            image = "busybox";
-            command = [
-              "wget"
-              "rel-demo:80"
-            ];
-          }
-        ];
-      };
-    }
-    {
-      apiVersion = "batch/v1";
-      kind = "Job";
-      metadata = {
-        name = "rel-demo-migrate";
-        annotations = {
-          "helm.sh/hook" = "pre-install,pre-upgrade";
-          "helm.sh/hook-delete-policy" = "before-hook-creation";
-        };
-      };
-      spec.template.spec = {
-        restartPolicy = "Never";
-        containers = [
-          {
-            name = "migrate";
-            image = "busybox";
-            command = [ "true" ];
-          }
-        ];
-      };
-    }
-  ];
+  widgetCrd = lib.findFirst (m: m.kind == "CustomResourceDefinition") null demoManifests;
 
   chartModuleOf =
     args:

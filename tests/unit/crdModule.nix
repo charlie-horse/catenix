@@ -1,73 +1,25 @@
 # Unit tests for lib/crdModule.nix: the resource module for the
-# CustomResourceDefinitions among already-parsed documents. Pure: the documents
-# are inline Nix (tests/fixtures/crd-widget.yaml and a cluster-scoped Knob), so
-# no YAML is parsed and `pkgs` is only an unforced module argument.
+# CustomResourceDefinitions among already-parsed documents. System-agnostic:
+# the documents are the recording of tests/fixtures/crd-widget.yaml parsed by
+# `yaml2json` (checked by tests/per-system.nix's `contracts.crd-widget`) and a
+# cluster-scoped Knob inline, so no YAML is parsed and `pkgs` is only an
+# unforced module argument. This also covers `importCrdModule`, which is this
+# over `yaml2json` (tests/unit/importCrdModule.nix checks that wiring).
 {
   lib,
   catenix,
   pkgs,
   helpers,
+  recorded,
   ...
 }:
 let
   inherit (catenix) crdModule;
 
-  # tests/fixtures/crd-widget.yaml: Widget, namespaced, served v1 and unserved
-  # v1alpha1, plus a Namespace document to skip.
-  widgetDocuments = [
-    {
-      apiVersion = "apiextensions.k8s.io/v1";
-      kind = "CustomResourceDefinition";
-      metadata.name = "widgets.example.com";
-      spec = {
-        group = "example.com";
-        scope = "Namespaced";
-        names = {
-          kind = "Widget";
-          plural = "widgets";
-          singular = "widget";
-        };
-        versions = [
-          {
-            name = "v1";
-            served = true;
-            storage = true;
-            schema.openAPIV3Schema = {
-              type = "object";
-              properties = {
-                apiVersion.type = "string";
-                kind.type = "string";
-                metadata.type = "object";
-                spec = {
-                  type = "object";
-                  required = [ "size" ];
-                  properties = {
-                    size.type = "integer";
-                    label.type = "string";
-                    extra = {
-                      type = "object";
-                      x-kubernetes-preserve-unknown-fields = true;
-                    };
-                  };
-                };
-              };
-            };
-          }
-          {
-            name = "v1alpha1";
-            served = false;
-            storage = false;
-            schema.openAPIV3Schema.type = "object";
-          }
-        ];
-      };
-    }
-    {
-      apiVersion = "v1";
-      kind = "Namespace";
-      metadata.name = "not-a-crd";
-    }
-  ];
+  # tests/fixtures/crd-widget.yaml, as `yaml2json` parses it (recorded):
+  # Widget, namespaced, served v1 and unserved v1alpha1, plus a Namespace
+  # document to skip.
+  widgetDocuments = recorded "crd-widget";
 
   # A cluster-scoped kind in the same group, with the injected fields required.
   knobDocuments = [

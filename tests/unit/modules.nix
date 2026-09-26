@@ -2,15 +2,18 @@
 # option (freeform unless strict, merged with `resourceModule`-style kind
 # declarations) and the read-only `build` outputs wired to lib/render.nix.
 # `build.yaml` is only checked as a derivation: reading it back would be
-# import-from-derivation, which this suite's sandboxed runner can't do.
+# import-from-derivation, which this system-agnostic suite can't do
+# (tests/per-system.nix's `rendering` suites read it). Instantiating needs no
+# builder, so `referencePkgs` stands in for the host's `pkgs`.
 {
   lib,
   catenix,
-  pkgs,
+  referencePkgs,
   helpers,
   ...
 }:
 let
+  pkgs = referencePkgs;
   inherit (lib) mkOption types;
 
   eval =

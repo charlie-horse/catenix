@@ -1,15 +1,16 @@
 # Unit tests for lib/fetchChart.nix: `helm pull` as a fixed-output
 # derivation. Fetching needs the network, so only the derivation is checked
-# here (sandbox-safe); the pull itself was checked by hand (DESIGN.md).
+# here (sandbox-safe, and system-agnostic: `referencePkgs` only instantiates);
+# the pull itself was checked by hand (DESIGN.md).
 {
   lib,
   catenix,
-  pkgs,
+  referencePkgs,
   helpers,
   ...
 }:
 let
-  fetchChart = catenix.fetchChart pkgs;
+  fetchChart = catenix.fetchChart referencePkgs;
 
   hash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
 
