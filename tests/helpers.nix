@@ -13,4 +13,48 @@
     lib.evalModules {
       modules = [ { _module.args.pkgs = pkgs; } ] ++ modules;
     };
+
+  # Where two unequal values first differ, as `{ path, expected, actual }`
+  # (`path` like `[0].spec.size`), or null when they are equal: a readable
+  # failure for large values such as recordings.
+  firstDifference =
+    let
+      at =
+        path: expected: actual:
+        let
+          first = lib.findFirst (d: d != null) null;
+          here = { inherit path expected actual; };
+        in
+        if expected == actual then
+          null
+        else if lib.isAttrs expected && lib.isAttrs actual then
+          let
+            names = lib.unique (lib.attrNames expected ++ lib.attrNames actual);
+          in
+          lib.defaultTo here (
+            first (
+              map (
+                name: at "${path}.${name}" (expected.${name} or "<absent>") (actual.${name} or "<absent>")
+              ) names
+            )
+          )
+        else if lib.isList expected && lib.isList actual then
+          let
+            common = lib.min (lib.length expected) (lib.length actual);
+          in
+          lib.defaultTo
+            {
+              path = "${path} (length)";
+              expected = lib.length expected;
+              actual = lib.length actual;
+            }
+            (
+              first (
+                lib.genList (i: at "${path}[${toString i}]" (lib.elemAt expected i) (lib.elemAt actual i)) common
+              )
+            )
+        else
+          here;
+    in
+    at "";
 }

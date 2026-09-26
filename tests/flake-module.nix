@@ -25,6 +25,15 @@
         catenixModule = self.nixosModules.default;
       };
 
+      helpers = import ./helpers.nix { inherit lib; };
+
+      recordings = import ./recordings.nix {
+        catenix = self.lib;
+        fixtures = ./fixtures;
+        kubernetesSrc = inputs.kubernetes-src;
+        certManagerChart = inputs.cert-manager-chart;
+      };
+
       evalTimeSuites = [
         "yaml2json"
         "toYaml"
@@ -36,6 +45,14 @@
       evalTimeTests = {
         unit = lib.getAttrs evalTimeSuites suites.unit;
         inherit (suites) integration e2e;
+        # Each recording in tests/fixtures/recorded equals the real call it
+        # stands in for (tests/recordings.nix).
+        contracts = lib.mapAttrs (name: real: {
+          testMatchesRecording = {
+            expr = real pkgs;
+            expected = lib.importJSON ./fixtures/recorded/${name}.json;
+          };
+        }) recordings;
       };
 
       evalTime =
@@ -46,7 +63,19 @@
         if failures == [ ] then
           pkgs.runCommand name { } "touch $out"
         else
-          throw "${name} failed:\n${lib.generators.toPretty { } failures}";
+          throw "${name} failed:\n${lib.concatMapStringsSep "\n" describe failures}";
+
+      # A failure as where the result first differs from the expectation
+      # (recordings are too large to print whole).
+      describe =
+        failure:
+        let
+          difference = helpers.firstDifference failure.expected failure.result;
+          pretty = lib.generators.toPretty { };
+        in
+        "${failure.name}: differs at ${
+          if difference.path == "" then "the top" else difference.path
+        }\n  expected: ${pretty difference.expected}\n  result:   ${pretty difference.actual}";
     in
     {
       nix-unit = {
@@ -63,7 +92,17 @@
         tests.unit = removeAttrs suites.unit evalTimeSuites;
       };
 
-      legacyPackages = { inherit evalTimeTests; };
+      legacyPackages = {
+        inherit evalTimeTests;
+        recordings = lib.mapAttrs (
+          name: real:
+          pkgs.runCommand "${name}.json" {
+            nativeBuildInputs = [ pkgs.jq ];
+            json = builtins.toJSON (real pkgs);
+            passAsFile = [ "json" ];
+          } ''jq . "$jsonPath" > "$out"''
+        ) recordings;
+      };
 
       checks = {
         unit-yaml2json = evalTime "unit-yaml2json" evalTimeTests.unit.yaml2json;
@@ -77,6 +116,9 @@
         e2e-real-spec = evalTime "e2e-real-spec" evalTimeTests.e2e.realSpec;
         e2e-real-crd = evalTime "e2e-real-crd" evalTimeTests.e2e.realCrd;
         e2e-helm-cert-manager = evalTime "e2e-helm-cert-manager" evalTimeTests.e2e.helmCertManager;
-      };
+      }
+      // lib.mapAttrs' (
+        name: suite: lib.nameValuePair "contracts-${name}" (evalTime "contracts-${name}" suite)
+      ) evalTimeTests.contracts;
     };
 }
