@@ -1,0 +1,10 @@
+apiVersion: v2
+name: demo
+description: Fixture chart for catenix's Helm tests.
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+dependencies:
+  # Vendored under charts/: builds have no network.
+  - name: sub
+    version: 0.1.0

@@ -1,0 +1,24 @@
+{
+  "openapi": "3.0.0",
+  "info": { "title": "catenix test fixture: example.io/v1beta1, not served by default", "version": "v0.0.0" },
+  "paths": {
+    "/apis/example.io/v1beta1/gizmos": {
+      "get": { "x-kubernetes-group-version-kind": { "group": "example.io", "version": "v1beta1", "kind": "Gizmo" } }
+    }
+  },
+  "components": {
+    "schemas": {
+      "io.example.v1beta1.Gizmo": {
+        "type": "object",
+        "description": "A beta version of the cluster-scoped test kind, scoped by paths.",
+        "properties": {
+          "apiVersion": { "type": "string" },
+          "kind": { "type": "string" },
+          "metadata": { "type": "object" },
+          "weight": { "type": "number" }
+        },
+        "x-kubernetes-group-version-kind": [{ "group": "example.io", "version": "v1beta1", "kind": "Gizmo" }]
+      }
+    }
+  }
+}

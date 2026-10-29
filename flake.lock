@@ -1,0 +1,104 @@
+{
+  "nodes": {
+    "cert-manager-chart": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1789055334,
+        "narHash": "sha256-AsbUc4Q9aVfTmENGPPmjOwC6V6v3MpTN1cKIl8csi10=",
+        "type": "tarball",
+        "url": "https://charts.jetstack.io/charts/cert-manager-v1.21.2.tgz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://charts.jetstack.io/charts/cert-manager-v1.21.2.tgz"
+      }
+    },
+    "flake-parts": {
+      "inputs": {
+        "nixpkgs-lib": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1788450739,
+        "narHash": "sha256-glZLQlzIn1fXH6PazR2iUmTo7kzzyYSshrWhLS9TqCU=",
+        "owner": "hercules-ci",
+        "repo": "flake-parts",
+        "rev": "31729ca8cbdb4fa927b34e5f4353e6a83f39e993",
+        "type": "github"
+      },
+      "original": {
+        "owner": "hercules-ci",
+        "repo": "flake-parts",
+        "type": "github"
+      }
+    },
+    "kubernetes-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1787741060,
+        "narHash": "sha256-FQ4qajAPLCb4a/qOavqE7NuylrfObJfZSE8WG7SKM68=",
+        "ref": "refs/tags/v1.37.0",
+        "rev": "f54c212e3a2f75d674b717a9b29052b20b60aefc",
+        "shallow": true,
+        "type": "git",
+        "url": "https://github.com/kubernetes/kubernetes"
+      },
+      "original": {
+        "ref": "refs/tags/v1.37.0",
+        "shallow": true,
+        "type": "git",
+        "url": "https://github.com/kubernetes/kubernetes"
+      }
+    },
+    "nix-unit": {
+      "inputs": {
+        "nix-github-actions": [],
+        "nixpkgs": [
+          "nixpkgs"
+        ],
+        "treefmt-nix": []
+      },
+      "locked": {
+        "lastModified": 1784925540,
+        "narHash": "sha256-11IOL5tyJbB3vMQzzhIULuPtoHJpkLFz4BaKApm6t0Q=",
+        "owner": "nix-community",
+        "repo": "nix-unit",
+        "rev": "b3d16367c54621fd073aa8c1dd510042f771f624",
+        "type": "github"
+      },
+      "original": {
+        "owner": "nix-community",
+        "repo": "nix-unit",
+        "type": "github"
+      }
+    },
+    "nixpkgs": {
+      "locked": {
+        "lastModified": 1790046670,
+        "narHash": "sha256-MYiI+CzL0tuWgRPjGsKCDHqYs2T3OzMlMQWOYWG0qso=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "6774f7bc253789b113a4f39285dc0fa100abeacc",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "ref": "nixos-unstable",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
+    "root": {
+      "inputs": {
+        "cert-manager-chart": "cert-manager-chart",
+        "flake-parts": "flake-parts",
+        "kubernetes-src": "kubernetes-src",
+        "nix-unit": "nix-unit",
+        "nixpkgs": "nixpkgs"
+      }
+    }
+  },
+  "root": "root",
+  "version": 7
+}

@@ -1,0 +1,9 @@
+apiVersion: example.com/v1
+kind: Widget
+metadata:
+  name: {{ include "demo.fullname" . }}
+spec:
+  size: {{ .Values.widget.size }}
+  # A YAML 1.1 boolean, as Kubernetes reads it: true.
+  enabled: yes
+  color: {{ .Values.widget.color | default "blue" }}

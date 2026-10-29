@@ -1,0 +1,12 @@
+replicas: 2
+# Renders `replicas` as a string, which the Deployment type rejects.
+replicasAsString: false
+image:
+  repository: nginx
+  tag: "1.27"
+port: 8080
+greeting: hello
+widget:
+  size: 3
+extraConfigMap:
+  enabled: false

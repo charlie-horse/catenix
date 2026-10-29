@@ -1,0 +1,80 @@
+[
+  {
+    "apiVersion": "apiextensions.k8s.io/v1",
+    "kind": "CustomResourceDefinition",
+    "metadata": {
+      "name": "portals.example.com"
+    },
+    "spec": {
+      "group": "example.com",
+      "names": {
+        "kind": "Portal",
+        "plural": "portals",
+        "singular": "portal"
+      },
+      "scope": "Namespaced",
+      "versions": [
+        {
+          "name": "v1",
+          "schema": {
+            "openAPIV3Schema": {
+              "properties": {
+                "apiVersion": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string"
+                },
+                "metadata": {
+                  "type": "object"
+                },
+                "spec": {
+                  "properties": {
+                    "caseless": {
+                      "pattern": "(?i)^yes|no$",
+                      "type": "string"
+                    },
+                    "headers": {
+                      "additionalProperties": {
+                        "format": "byte",
+                        "type": "string"
+                      },
+                      "maxProperties": 2,
+                      "type": "object"
+                    },
+                    "hostnames": {
+                      "items": {
+                        "maxLength": 253,
+                        "pattern": "^(\\*\\.)?[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$",
+                        "type": "string"
+                      },
+                      "maxItems": 2,
+                      "type": "array"
+                    },
+                    "listener": {
+                      "maxLength": 63,
+                      "minLength": 1,
+                      "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
+                      "type": "string"
+                    },
+                    "timeout": {
+                      "pattern": "^([0-9]{1,5}(h|m|s|ms)){1,4}$",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "listener"
+                  ],
+                  "type": "object"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "served": true,
+          "storage": true
+        }
+      ]
+    }
+  }
+]
