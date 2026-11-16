@@ -159,6 +159,12 @@ input rather than `github:`: Kubernetes marks `hack/lib/version.sh` as
 `export-subst`, so GitHub's tarball differs from the git tree, and the git
 fetcher is the one that works everywhere (including sandboxed CI with only git
 egress). Bump it by editing the tag and running `nix flake update kubernetes-src`.
+Only `api/openapi-spec/v3`, `api/discovery/aggregated_v2.json` and the
+sample-controller CRD are read. `mkKubernetesModule` reads them at evaluation
+time, and the test suites get them as one small store path (`kubernetesSrc` in
+`tests/flake-module.nix`). With Nix 2.35 or later, the rest of the tree is
+fetched into Nix's git cache but never copied to the store; older Nix copies
+the whole tree.
 
 `cert-manager-chart` (`flake = false`) is the published cert-manager chart
 archive, `tarball+https://charts.jetstack.io/charts/cert-manager-v<version>.tgz`,

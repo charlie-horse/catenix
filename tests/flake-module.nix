@@ -22,12 +22,37 @@
   ...
 }:
 let
+  # The parts of kubernetes-src the suites read, as their own store path: the
+  # nix-unit sandbox and the recordings depend on it instead of the whole tree.
+  # With Nix 2.35 or later the rest of the tree is never copied to the store.
+  kubernetesSrc =
+    let
+      root = /. + builtins.unsafeDiscardStringContext inputs.kubernetes-src.outPath;
+      wanted = [
+        "api/openapi-spec/v3"
+        "api/discovery/aggregated_v2.json"
+        "staging/src/k8s.io/sample-controller/artifacts/examples/crd.yaml"
+      ];
+    in
+    builtins.path {
+      name = "kubernetes-src";
+      path = root;
+      filter =
+        path: _type:
+        let
+          relative = lib.removePrefix "${toString root}/" (toString path);
+        in
+        lib.any (
+          w: relative == w || lib.hasPrefix "${w}/" relative || lib.hasPrefix "${relative}/" w
+        ) wanted;
+    };
+
   suiteArgs = {
     inherit lib;
     catenix = self.lib;
     # One fixed system's nixpkgs, for suites that only instantiate derivations.
     referencePkgs = inputs.nixpkgs.legacyPackages.x86_64-linux;
-    kubernetesSrc = inputs.kubernetes-src;
+    inherit kubernetesSrc;
     certManagerChart = inputs.cert-manager-chart;
     catenixModule = self.nixosModules.default;
   };
@@ -79,9 +104,9 @@ in
             nixpkgs
             flake-parts
             nix-unit
-            kubernetes-src
             cert-manager-chart
             ;
+          kubernetes-src = kubernetesSrc;
         };
       };
 
