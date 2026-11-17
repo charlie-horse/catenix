@@ -4,7 +4,8 @@
 # aggregated discovery (`api/discovery/aggregated_v2.json`, if present). `apis`
 # is passed to `kubernetes.loadKubernetes`: "default" (the group/versions a
 # default cluster serves), "all", or a list of group/versions. No derivations:
-# the source is already in the store, so its files are read directly.
+# the files are read at evaluation time, which with Nix 2.35 or later does not
+# copy the source to the store.
 { lib, catenix }:
 {
   kubernetesSrc,
